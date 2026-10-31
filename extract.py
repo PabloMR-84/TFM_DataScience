@@ -4,7 +4,6 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
-# Cargar variables de entorno desde el archivo .env si existe (para ejecución local)
 load_dotenv()
 
 API_URL = "https://datosbizi.com/api/stations"
@@ -13,7 +12,6 @@ OUTPUT_DIR = os.path.join("data", "raw", "historical")
 
 
 def extract_data():
-    # Configuración de cabeceras si se dispone de clave de API
     headers = {}
     if API_KEY:
         headers["Authorization"] = f"Bearer {API_KEY}"
@@ -28,25 +26,36 @@ def extract_data():
         print("No se obtuvieron registros de la API.")
         return
 
-    # 2. Convertir a DataFrame
-    df = pd.DataFrame(stations)
+    # 2. Convertir la nueva captura a DataFrame
+    df_new = pd.DataFrame(stations)
 
-    # 3. Tipado de fechas y timestamp UTC de extracción
-    if "recordedAt" in df.columns:
-        df["recordedAt"] = pd.to_datetime(df["recordedAt"])
+    if "recordedAt" in df_new.columns:
+        df_new["recordedAt"] = pd.to_datetime(df_new["recordedAt"])
 
     now_utc = datetime.now(timezone.utc)
-    df["extractedAt"] = now_utc
+    df_new["extractedAt"] = now_utc
 
-    # 4. Crear carpeta de destino si no existe
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # 5. Generar archivo Parquet comprimido (ej: bizi_20261031_120000.parquet)
-    file_name = f"bizi_{now_utc.strftime('%Y%m%d_%H%M%S')}.parquet"
+    # 3. Nombre del archivo basado SOLO en la fecha (ej: bizi_20261031.parquet)
+    today_str = now_utc.strftime("%Y%m%d")
+    file_name = f"bizi_{today_str}.parquet"
     file_path = os.path.join(OUTPUT_DIR, file_name)
 
-    df.to_parquet(file_path, engine="pyarrow", compression="snappy", index=False)
-    print(f"Éxito: Guardado {file_name} ({len(df)} estaciones).")
+    # 4. Si el archivo del día ya existe, le concatenamos los datos nuevos
+    if os.path.exists(file_path):
+        df_existing = pd.read_parquet(file_path)
+        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+    else:
+        df_combined = df_new
+
+    # 5. Guardar el archivo diario actualizado
+    df_combined.to_parquet(
+        file_path, engine="pyarrow", compression="snappy", index=False
+    )
+    print(
+        f"Éxito: Actualizado {file_name}. Filas acumuladas hoy: {len(df_combined)}."
+    )
 
 
 if __name__ == "__main__":
