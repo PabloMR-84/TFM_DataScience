@@ -2,14 +2,24 @@ from datetime import datetime, timezone
 import os
 import pandas as pd
 import requests
+from dotenv import load_dotenv
+
+# Cargar variables de entorno desde el archivo .env si existe (para ejecución local)
+load_dotenv()
 
 API_URL = "https://datosbizi.com/api/stations"
+API_KEY = os.getenv("BIZI_API_KEY")
 OUTPUT_DIR = os.path.join("data", "raw", "historical")
 
 
 def extract_data():
+    # Configuración de cabeceras si se dispone de clave de API
+    headers = {}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+
     # 1. Petición a la API
-    response = requests.get(API_URL, timeout=15)
+    response = requests.get(API_URL, headers=headers, timeout=15)
     response.raise_for_status()
     payload = response.json()
 
@@ -21,7 +31,7 @@ def extract_data():
     # 2. Convertir a DataFrame
     df = pd.DataFrame(stations)
 
-    # 3. Tipado de fechas y timestamp de extracción
+    # 3. Tipado de fechas y timestamp UTC de extracción
     if "recordedAt" in df.columns:
         df["recordedAt"] = pd.to_datetime(df["recordedAt"])
 

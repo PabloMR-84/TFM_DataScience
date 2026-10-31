@@ -4,7 +4,7 @@ on:
   schedule:
     # Se ejecuta cada 10 minutos
     - cron: '*/10 * * * *'
-  workflow_dispatch: # Permite lanzar la tarea manualmente desde la web de GitHub
+  workflow_dispatch: # Permite lanzar la tarea manualmente desde GitHub
 
 permissions:
   contents: write
@@ -29,6 +29,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: Ejecutar script de extracción
+        env:
+          BIZI_API_KEY: ${{ secrets.BIZI_API_KEY }}
         run: python extract.py
 
       - name: Hacer commit y push de los archivos Parquet

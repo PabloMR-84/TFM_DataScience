@@ -1,3 +1,5 @@
+
+.env
 .venv/
 __pycache__/
 .ipynb_checkpoints/
@@ -5,3 +7,4 @@ __pycache__/
 
 *.pdf
 docs/entregas/notebook.ipynb
+
