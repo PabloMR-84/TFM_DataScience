@@ -1,10 +1,11 @@
 name: Extracción Automática Bizi Zaragoza
 
 on:
-  schedule:
-    # Se ejecuta cada 10 minutos
-    - cron: '*/10 * * * *'
-  workflow_dispatch: # Permite lanzar la tarea manualmente desde GitHub
+  workflow_dispatch: # Disparado cada 10 min desde cron-job.org (y manualmente desde GitHub)
+
+concurrency:
+  group: bizi-extraction
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -39,4 +40,5 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add data/raw/historical/*.parquet
           git commit -m "chrono: auto-extracción parquet [skip ci]" || echo "No hay cambios para subir"
+          git pull --rebase
           git push
