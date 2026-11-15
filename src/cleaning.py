@@ -4,15 +4,14 @@ src/cleaning.py
 Módulo de limpieza, estandarización de esquemas y transformaciones (Capa Silver).
 Contiene funciones puras que reciben DataFrames en crudo (Bronze) y devuelven
 DataFrames estandarizados y tipados para la Capa Silver, aplicando validaciones
-de rango y conservando valores nulos en variables de estado.
+de rango, conservando valores nulos reales y estandarizando todas las marcas
+temporales a la zona horaria Europe/Madrid.
 """
 
-from typing import Any, Dict
-import json
 import numpy as np
 import pandas as pd
 
-from src.utils import parse_dict_field
+from src.utils import parse_dict_field, safe_local_timestamp
 
 
 def clean_stations(df_raw: pd.DataFrame) -> pd.DataFrame:
@@ -20,15 +19,14 @@ def clean_stations(df_raw: pd.DataFrame) -> pd.DataFrame:
     Limpia y estandariza el maestro de estaciones (stations_raw.json).
     - Renombra atributos a snake_case.
     - Castea tipos numéricos y timestamps con zona horaria Europe/Madrid.
-    - Conserva nulos en variables de estado (evita convertir lecturas inválidas en 0).
-    - Aplica validaciones de rangos (capacity > 0 y 0 <= bikes_available <= capacity).
+    - Conserva nulos en variables de estado mediante Int64.
+    - Aplica validaciones de rangos (capacity > 0 y 0 <= bikes/anchors <= capacity).
     """
     if df_raw.empty:
         return pd.DataFrame()
 
     df = df_raw.copy()
-    
-    # 1. Renombrar columnas
+
     rename_dict = {
         "id": "station_id",
         "lat": "latitude",
@@ -38,55 +36,45 @@ def clean_stations(df_raw: pd.DataFrame) -> pd.DataFrame:
     }
     df.rename(columns=rename_dict, inplace=True)
 
-    # 2. Convertir timestamp a Datetime con zona horaria Europe/Madrid
     if "recordedAt" in df.columns:
-        df["recordedAt"] = pd.to_datetime(df["recordedAt"], errors="coerce", utc=True)
-        df["recordedAt"] = df["recordedAt"].dt.tz_convert("Europe/Madrid")
+        df["recordedAt"] = safe_local_timestamp(df["recordedAt"])
 
-    # 3. Formatear string
     if "name" in df.columns:
         df["name"] = df["name"].astype(str).str.strip()
 
-    # 4. Casteo numérico conservando nulos mediante tipos int nullable ("Int64")
     if "station_id" in df.columns:
         df["station_id"] = pd.to_numeric(df["station_id"], errors="coerce").astype("Int64")
 
-    state_cols = ["capacity", "bikes_available", "anchors_free"]
-    for col in state_cols:
+    for col in ["capacity", "bikes_available", "anchors_free"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
 
-    float_cols = ["latitude", "longitude"]
-    for col in float_cols:
+    for col in ["latitude", "longitude"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
 
-    # 5. Validaciones de rangos y calidad de datos
+    # Validaciones de rangos físicos
     if "capacity" in df.columns:
-        df.loc[df["capacity"] <= 0, "capacity"] = np.nan
+        df.loc[df["capacity"] <= 0, "capacity"] = pd.NA
 
     if "bikes_available" in df.columns and "capacity" in df.columns:
         invalid_bikes = (df["bikes_available"] < 0) | (df["bikes_available"] > df["capacity"])
-        df.loc[invalid_bikes, "bikes_available"] = np.nan
+        df.loc[invalid_bikes, "bikes_available"] = pd.NA
 
     if "anchors_free" in df.columns and "capacity" in df.columns:
         invalid_anchors = (df["anchors_free"] < 0) | (df["anchors_free"] > df["capacity"])
-        df.loc[invalid_anchors, "anchors_free"] = np.nan
+        df.loc[invalid_anchors, "anchors_free"] = pd.NA
 
     return df
 
 
 def clean_rebalancing(df_raw: pd.DataFrame) -> pd.DataFrame:
-    """
-    Limpia el reporte de transferencias logísticas (rebalancing_raw.json).
-    - Renombra identificadores de origen/destino.
-    - Desanida timeWindow, expectedImpact y ajusta motivos usando src.utils.
-    """
+    """Limpia el reporte de transferencias logísticas (rebalancing_raw.json)."""
     if df_raw.empty:
         return pd.DataFrame()
 
     df = df_raw.copy()
-    
+
     rename_dict = {
         "originStationId": "origin_station_id",
         "originStationName": "origin_station_name",
@@ -98,35 +86,38 @@ def clean_rebalancing(df_raw: pd.DataFrame) -> pd.DataFrame:
     }
     df.rename(columns=rename_dict, inplace=True)
 
-    # Desanidar ventanas de tiempo e impacto estimado mediante src.utils.parse_dict_field
     if "timeWindow" in df.columns:
         tw_parsed = df["timeWindow"].apply(parse_dict_field)
-        df["time_window_start"] = tw_parsed.apply(lambda x: x.get("start", None))
-        df["time_window_end"] = tw_parsed.apply(lambda x: x.get("end", None))
+        df["time_window_start"] = safe_local_timestamp(
+            tw_parsed.apply(lambda x: x.get("start", None))
+        )
+        df["time_window_end"] = safe_local_timestamp(
+            tw_parsed.apply(lambda x: x.get("end", None))
+        )
         df.drop(columns=["timeWindow"], errors="ignore", inplace=True)
 
     if "expectedImpact" in df.columns:
         ei_parsed = df["expectedImpact"].apply(parse_dict_field)
-        df["empties_avoided"] = ei_parsed.apply(lambda x: x.get("emptiesAvoided", None))
-        df["empties_avoided"] = pd.to_numeric(df["empties_avoided"], errors="coerce").astype("Int64")
-        
-        df["fulls_avoided"] = ei_parsed.apply(lambda x: x.get("fullsAvoided", None))
-        df["fulls_avoided"] = pd.to_numeric(df["fulls_avoided"], errors="coerce").astype("Int64")
-        
+        df["empties_avoided"] = pd.to_numeric(
+            ei_parsed.apply(lambda x: x.get("emptiesAvoided", None)), errors="coerce"
+        ).astype("Int64")
+        df["fulls_avoided"] = pd.to_numeric(
+            ei_parsed.apply(lambda x: x.get("fullsAvoided", None)), errors="coerce"
+        ).astype("Int64")
         df.drop(columns=["expectedImpact"], errors="ignore", inplace=True)
 
     if "reasons" in df.columns:
-        df["reasons_clean"] = df["reasons"].astype(str).str.replace(r"[\[\]']", "", regex=True).str.strip()
+        df["reasons_clean"] = (
+            df["reasons"].astype(str).str.replace(r"[\[\]']", "", regex=True).str.strip()
+        )
         df.drop(columns=["reasons"], errors="ignore", inplace=True)
 
-    # Tipado explícito de IDs y movimientos conservando nulos
     for col in ["origin_station_id", "destination_station_id", "bikes_to_move"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
 
-    # Validación de rango: bicicletas a mover deben ser estrictamente positivas
     if "bikes_to_move" in df.columns:
-        df.loc[df["bikes_to_move"] <= 0, "bikes_to_move"] = np.nan
+        df.loc[df["bikes_to_move"] <= 0, "bikes_to_move"] = pd.NA
 
     return df
 
@@ -134,14 +125,14 @@ def clean_rebalancing(df_raw: pd.DataFrame) -> pd.DataFrame:
 def clean_rankings(df_raw: pd.DataFrame) -> pd.DataFrame:
     """
     Limpia métricas operativas y horas de estrés (rankings_raw.json).
-    - Normaliza nombres de columnas y rangos de fechas.
-    - Calcula proporciones normalizadas de fricción (full_hour_share, problem_hour_share).
+    - Conserva window_start, window_end y generated_at en Europe/Madrid.
+    - Preserva valores nulos en métricas desconocidas (NO rellena con 0).
     """
     if df_raw.empty:
         return pd.DataFrame()
 
     df = df_raw.copy()
-    
+
     rename_dict = {
         "id": "ranking_id",
         "stationId": "station_id",
@@ -153,33 +144,43 @@ def clean_rankings(df_raw: pd.DataFrame) -> pd.DataFrame:
         "totalHours": "total_hours",
         "problemHours": "problem_hours",
         "emptyHourShare": "empty_hour_share",
+        "fullHourShare": "full_hour_share",
         "windowStart": "window_start",
         "windowEnd": "window_end",
+        "generatedAt": "generated_at",
         "demandVsStressedHint": "demand_vs_stressed_hint",
     }
     df.rename(columns=rename_dict, inplace=True)
 
-    # Castear station_id
     if "station_id" in df.columns:
         df["station_id"] = pd.to_numeric(df["station_id"], errors="coerce").astype("Int64")
 
-    # Castear métricas numéricas acumuladas conservando nulos si no hay lectura
-    num_cols = ["turnover_score", "empty_hours", "full_hours", "total_hours", "problem_hours"]
-    for col in num_cols:
+    metric_cols = [
+        "turnover_score",
+        "empty_hours",
+        "full_hours",
+        "total_hours",
+        "problem_hours",
+        "empty_hour_share",
+        "full_hour_share",
+    ]
+    for col in metric_cols:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
+            df.loc[df[col] < 0, col] = np.nan
 
-    # Fechas
-    for date_col in ["window_start", "window_end"]:
+    for date_col in ["window_start", "window_end", "generated_at"]:
         if date_col in df.columns:
-            clean_date_str = df[date_col].astype(str).str.replace(r"\s*\([^)]*\)", "", regex=True)
-            df[date_col] = pd.to_datetime(clean_date_str, errors="coerce")
+            df[date_col] = safe_local_timestamp(df[date_col])
 
-    # Derivar proporciones si existen métricas necesarias
-    if "full_hours" in df.columns and "total_hours" in df.columns:
-        df["full_hour_share"] = np.where(df["total_hours"] > 0, (df["full_hours"] / df["total_hours"]).round(4), np.nan)
-    if "problem_hours" in df.columns and "total_hours" in df.columns:
-        df["problem_hour_share"] = np.where(df["total_hours"] > 0, (df["problem_hours"] / df["total_hours"]).round(4), np.nan)
+    if "full_hour_share" not in df.columns and {"full_hours", "total_hours"}.issubset(df.columns):
+        df["full_hour_share"] = np.where(
+            df["total_hours"] > 0, (df["full_hours"] / df["total_hours"]).round(4), np.nan
+        )
+    if "problem_hour_share" not in df.columns and {"problem_hours", "total_hours"}.issubset(df.columns):
+        df["problem_hour_share"] = np.where(
+            df["total_hours"] > 0, (df["problem_hours"] / df["total_hours"]).round(4), np.nan
+        )
 
     return df
 
@@ -187,14 +188,14 @@ def clean_rankings(df_raw: pd.DataFrame) -> pd.DataFrame:
 def clean_patterns(df_raw: pd.DataFrame) -> pd.DataFrame:
     """
     Limpia los perfiles basales de ocupación horaria (patterns_raw.json).
-    - Estandariza day_type (WEEKDAY / WEEKEND).
-    - Estandariza tipos numéricos y valida el rango del porcentaje de ocupación (0.0 a 1.0).
+    - Conserva generated_at y window_end en Europe/Madrid.
+    - Valida rango de occupancy_avg entre 0.0 y 1.0 y limpia valores -0.0.
     """
     if df_raw.empty:
         return pd.DataFrame()
 
     df = df_raw.copy()
-    
+
     rename_dict = {
         "stationId": "station_id",
         "dayType": "day_type",
@@ -202,24 +203,29 @@ def clean_patterns(df_raw: pd.DataFrame) -> pd.DataFrame:
         "bikesAvg": "bikes_avg",
         "anchorsAvg": "anchors_avg",
         "sampleCount": "sample_count",
+        "generatedAt": "generated_at",
+        "windowEnd": "window_end",
     }
     df.rename(columns=rename_dict, inplace=True)
 
-    if "station_id" in df.columns:
-        df["station_id"] = pd.to_numeric(df["station_id"], errors="coerce").astype("Int64")
-    if "hour" in df.columns:
-        df["hour"] = pd.to_numeric(df["hour"], errors="coerce").astype("Int64")
+    for col in ["station_id", "hour", "sample_count"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
 
     for col in ["occupancy_avg", "bikes_avg", "anchors_avg"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
+            df[col] = df[col].replace(-0.0, 0.0)
 
-    # Validación de rango para el porcentaje basal de ocupación
     if "occupancy_avg" in df.columns:
         df.loc[(df["occupancy_avg"] < 0.0) | (df["occupancy_avg"] > 1.0), "occupancy_avg"] = np.nan
 
     if "day_type" in df.columns:
         df["day_type"] = df["day_type"].astype(str).str.strip().str.upper()
+
+    for date_col in ["generated_at", "window_end"]:
+        if date_col in df.columns:
+            df[date_col] = safe_local_timestamp(df[date_col])
 
     return df
 
@@ -227,14 +233,14 @@ def clean_patterns(df_raw: pd.DataFrame) -> pd.DataFrame:
 def clean_history(df_raw: pd.DataFrame) -> pd.DataFrame:
     """
     Limpia el histórico macro diario de la ciudad (bizi_history_raw.csv).
-    - Renombra variables y convierte 'day'/'date' a datetime y date_key.
-    - Estandariza indicadores globales de la red.
+    - Homogeneiza la columna date a la zona horaria Europe/Madrid.
+    - Conserva nulos reales sin rellenar con cero.
     """
     if df_raw.empty:
         return pd.DataFrame()
 
     df = df_raw.copy()
-    
+
     rename_dict = {
         "day": "date_str",
         "demandScore": "demand_score",
@@ -244,14 +250,24 @@ def clean_history(df_raw: pd.DataFrame) -> pd.DataFrame:
     }
     df.rename(columns=rename_dict, inplace=True)
 
-    # Manejo de la columna fecha
     time_col = "date_str" if "date_str" in df.columns else df.columns[0]
-    df["date"] = pd.to_datetime(df[time_col], errors="coerce")
+    parsed_dates = pd.to_datetime(df[time_col], errors="coerce")
+    if parsed_dates.dt.tz is None:
+        df["date"] = parsed_dates.dt.tz_localize("Europe/Madrid")
+    else:
+        df["date"] = parsed_dates.dt.tz_convert("Europe/Madrid")
+
     df["date_key"] = df["date"].dt.strftime("%Y%m%d").astype("Int64")
 
     for col in ["city_avg_occupancy", "balance_index"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").round(4).astype("float64")
+
+    if "city_avg_occupancy" in df.columns:
+        df.loc[
+            (df["city_avg_occupancy"] < 0.0) | (df["city_avg_occupancy"] > 1.0),
+            "city_avg_occupancy",
+        ] = np.nan
 
     for col in ["demand_score", "sample_count"]:
         if col in df.columns:
@@ -267,18 +283,15 @@ def clean_history(df_raw: pd.DataFrame) -> pd.DataFrame:
 def clean_historical_snapshots(df_raw: pd.DataFrame) -> pd.DataFrame:
     """
     Limpia y estandariza los snapshots históricos de estaciones (.parquet).
-    - Renombra atributos a snake_case (id/stationId -> station_id, etc.).
-    - Castea marcas temporales a Datetime con zona horaria Europe/Madrid (timestamp).
-    - Conserva nulos en variables de estado utilizando tipos "Int64" (evita simular 0 bicicletas).
-    - Aplica validaciones de rango (capacity > 0 y 0 <= bikes_available <= capacity).
-    - Elimina lecturas duplicadas por estación y marca temporal.
+    - Homogeneiza timestamp a Europe/Madrid.
+    - Conserva nulos reales en variables de estado mediante Int64.
+    - Aplica controles de rango físico y deduplicación por (station_id, timestamp).
     """
     if df_raw.empty:
         return pd.DataFrame()
 
     df = df_raw.copy()
 
-    # 1. Estandarización de nombres de columna
     rename_dict = {
         "id": "station_id",
         "stationId": "station_id",
@@ -289,41 +302,34 @@ def clean_historical_snapshots(df_raw: pd.DataFrame) -> pd.DataFrame:
     }
     df.rename(columns=rename_dict, inplace=True)
 
-    # 2. Homogeneización de la marca temporal (recordedAt o timestamp)
     time_col = "recordedAt" if "recordedAt" in df.columns else "timestamp"
     if time_col in df.columns:
-        df["timestamp"] = pd.to_datetime(df[time_col], errors="coerce", utc=True)
-        df["timestamp"] = df["timestamp"].dt.tz_convert("Europe/Madrid")
+        df["timestamp"] = safe_local_timestamp(df[time_col])
         if time_col != "timestamp":
             df.drop(columns=[time_col], inplace=True)
 
-    # 3. Casteo de tipos numéricos conservando nulos en variables de estado
     if "station_id" in df.columns:
         df["station_id"] = pd.to_numeric(df["station_id"], errors="coerce").astype("Int64")
 
-    state_cols = ["capacity", "bikes_available", "anchors_free"]
-    for col in state_cols:
+    for col in ["capacity", "bikes_available", "anchors_free"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
 
-    float_cols = ["latitude", "longitude"]
-    for col in float_cols:
+    for col in ["latitude", "longitude"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
 
-    # 4. Validaciones de rangos y calidad de datos
     if "capacity" in df.columns:
-        df.loc[df["capacity"] <= 0, "capacity"] = np.nan
+        df.loc[df["capacity"] <= 0, "capacity"] = pd.NA
 
     if "bikes_available" in df.columns and "capacity" in df.columns:
         invalid_bikes = (df["bikes_available"] < 0) | (df["bikes_available"] > df["capacity"])
-        df.loc[invalid_bikes, "bikes_available"] = np.nan
+        df.loc[invalid_bikes, "bikes_available"] = pd.NA
 
     if "anchors_free" in df.columns and "capacity" in df.columns:
         invalid_anchors = (df["anchors_free"] < 0) | (df["anchors_free"] > df["capacity"])
-        df.loc[invalid_anchors, "anchors_free"] = np.nan
+        df.loc[invalid_anchors, "anchors_free"] = pd.NA
 
-    # 5. Eliminación de lecturas duplicadas por estación e instante
     if "station_id" in df.columns and "timestamp" in df.columns:
         df.sort_values(by=["station_id", "timestamp"], inplace=True)
         df.drop_duplicates(subset=["station_id", "timestamp"], inplace=True)

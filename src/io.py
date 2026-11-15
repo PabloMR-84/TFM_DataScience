@@ -3,8 +3,8 @@ src/io.py
 ----------
 Módulo de entrada y salida de datos (I/O).
 Gestiona la descarga e ingesta desde la API (Capa Bronze) con control interactivo
-en bloque (reutilización vs. reemplazo), la carga de parquets históricos y la
-persistencia de DataFrames en las capas Silver y Gold.
+en bloque, preserva metadatos temporales de raíz, reporta estaciones sin patrones
+en la API, carga parquets históricos y guarda capas Silver y Gold.
 """
 
 from typing import Dict, List, Optional
@@ -69,6 +69,32 @@ def resolve_download_mode(force_download: Optional[bool] = None) -> bool:
         return False
 
 
+def _propagate_root_temporal_metadata(
+    df: pd.DataFrame, payload: Dict, fallback_timestamp: Optional[str] = None
+) -> pd.DataFrame:
+    """
+    Propaga metadatos temporales de la raíz de la respuesta JSON (generatedAt,
+    windowStart, windowEnd o window.start / window.end) hacia el DataFrame
+    si no vienen ya incluidos a nivel de fila.
+    """
+    if df.empty or not isinstance(payload, dict):
+        return df
+
+    window_obj = payload.get("window") if isinstance(payload.get("window"), dict) else {}
+
+    meta_map = {
+        "generatedAt": payload.get("generatedAt") or payload.get("timestamp") or fallback_timestamp,
+        "windowStart": payload.get("windowStart") or window_obj.get("start"),
+        "windowEnd": payload.get("windowEnd") or window_obj.get("end"),
+    }
+
+    for col_name, meta_val in meta_map.items():
+        if meta_val is not None and col_name not in df.columns:
+            df[col_name] = meta_val
+
+    return df
+
+
 # ==============================================================================
 # 1. FUNCIONES DE EXTRACCIÓN Y LECTURA (CAPA BRONZE)
 # ==============================================================================
@@ -88,7 +114,10 @@ def get_stations_raw(replace_file: bool = False) -> pd.DataFrame:
             json.dump(data, f, ensure_ascii=False, indent=4)
 
     stations_list = data.get("stations", data) if isinstance(data, dict) else data
-    return pd.DataFrame(stations_list)
+    df = pd.DataFrame(stations_list)
+    if isinstance(data, dict):
+        df = _propagate_root_temporal_metadata(df, data)
+    return df
 
 
 def get_rebalancing_raw(replace_file: bool = False) -> pd.DataFrame:
@@ -111,11 +140,17 @@ def get_rebalancing_raw(replace_file: bool = False) -> pd.DataFrame:
             json.dump(data, f, ensure_ascii=False, indent=4)
 
     rebal_list = data.get("transfers", data) if isinstance(data, dict) else data
-    return pd.DataFrame(rebal_list)
+    df = pd.DataFrame(rebal_list)
+    if isinstance(data, dict):
+        df = _propagate_root_temporal_metadata(df, data)
+    return df
 
 
 def get_rankings_raw(limit: int = 1000, replace_file: bool = False) -> pd.DataFrame:
-    """Obtiene los rankings de rotación/fricción desde API o caché local (rankings_raw.json)."""
+    """
+    Obtiene los rankings de rotación/fricción desde API o caché local (rankings_raw.json),
+    conservando windowStart, windowEnd y generatedAt desde la respuesta de la API.
+    """
     file_path = RAW_DIR / RAW_FILES_MAP["rankings"]
 
     if file_path.exists() and not replace_file:
@@ -134,42 +169,86 @@ def get_rankings_raw(limit: int = 1000, replace_file: bool = False) -> pd.DataFr
             json.dump(data, f, ensure_ascii=False, indent=4)
 
     rankings_list = data.get("rankings", data) if isinstance(data, dict) else data
-    return pd.DataFrame(rankings_list)
+    df = pd.DataFrame(rankings_list)
+    if isinstance(data, dict):
+        df = _propagate_root_temporal_metadata(df, data)
+    return df
 
 
 def get_patterns_raw(
     station_ids: List[int], limit_stations: Optional[int] = None, replace_file: bool = False
 ) -> pd.DataFrame:
     """
-    Obtiene patrones horarios iterando sobre la lista de station_ids.
-    Si ya existe y replace_file es False, carga directamente del JSON local.
+    Obtiene patrones horarios iterando sobre la lista de station_ids,
+    conservando metadatos temporales y reportando qué estaciones no devuelven patrón.
     """
     file_path = RAW_DIR / RAW_FILES_MAP["patterns"]
 
     if file_path.exists() and not replace_file:
         with open(file_path, "r", encoding="utf-8") as f:
-            all_patterns = json.load(f)
-    else:
-        all_patterns = []
-        ids_to_fetch = station_ids[:limit_stations] if limit_stations else station_ids
+            raw_loaded = json.load(f)
 
-        for s_id in ids_to_fetch:
-            try:
-                res = requests.get(
-                    f"{BASE_URL}/patterns",
-                    headers=HEADERS,
-                    params={"stationId": str(s_id)},
-                    timeout=15,
-                )
-                if res.status_code == 200:
-                    data_pat = res.json()
-                    patterns = data_pat.get("patterns", data_pat) if isinstance(data_pat, dict) else data_pat
+        file_mtime_iso = pd.Timestamp(file_path.stat().st_mtime, unit="s", tz="Europe/Madrid").isoformat()
+        if isinstance(raw_loaded, dict):
+            patterns_list = raw_loaded.get("patterns", [])
+            df = pd.DataFrame(patterns_list)
+            return _propagate_root_temporal_metadata(df, raw_loaded, fallback_timestamp=file_mtime_iso)
+
+        df = pd.DataFrame(raw_loaded)
+        if not df.empty and "generatedAt" not in df.columns and "windowEnd" not in df.columns:
+            df["generatedAt"] = file_mtime_iso
+        return df
+
+    all_patterns = []
+    empty_pattern_stations: List[int] = []
+    ids_to_fetch = station_ids[:limit_stations] if limit_stations else station_ids
+    fetch_ts_iso = pd.Timestamp.now(tz="Europe/Madrid").isoformat()
+
+    for s_id in ids_to_fetch:
+        try:
+            res = requests.get(
+                f"{BASE_URL}/patterns",
+                headers=HEADERS,
+                params={"stationId": str(s_id)},
+                timeout=15,
+            )
+            if res.status_code == 200:
+                data_pat = res.json()
+                if isinstance(data_pat, dict):
+                    patterns = data_pat.get("patterns", [])
+                    gen_at = data_pat.get("generatedAt") or data_pat.get("timestamp") or fetch_ts_iso
+                    window_obj = data_pat.get("window") if isinstance(data_pat.get("window"), dict) else {}
+                    win_end = data_pat.get("windowEnd") or window_obj.get("end")
+
+                    if not patterns:
+                        empty_pattern_stations.append(int(s_id))
+                    for item in patterns:
+                        if isinstance(item, dict):
+                            item.setdefault("generatedAt", gen_at)
+                            if win_end is not None:
+                                item.setdefault("windowEnd", win_end)
                     all_patterns.extend(patterns)
-            except Exception as e:
-                print(f"[AVISO] Error al descargar patrón de estación {s_id}: {e}")
+                else:
+                    if not data_pat:
+                        empty_pattern_stations.append(int(s_id))
+                    for item in data_pat:
+                        if isinstance(item, dict):
+                            item.setdefault("generatedAt", fetch_ts_iso)
+                    all_patterns.extend(data_pat)
+            else:
+                empty_pattern_stations.append(int(s_id))
+        except Exception as e:
+            empty_pattern_stations.append(int(s_id))
+            print(f"[AVISO] Error al descargar patrón de estación {s_id}: {e}")
 
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(all_patterns, f, ensure_ascii=False, indent=4)
+    if empty_pattern_stations:
+        print(
+            f"[AVISO API PATTERNS] {len(empty_pattern_stations)}/{len(ids_to_fetch)} estaciones "
+            f"sin curva basal en /api/patterns: {sorted(empty_pattern_stations)}"
+        )
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(all_patterns, f, ensure_ascii=False, indent=4)
 
     return pd.DataFrame(all_patterns)
 
