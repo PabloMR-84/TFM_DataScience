@@ -2,15 +2,18 @@
 src/io.py
 ----------
 Módulo de entrada y salida de datos (I/O).
-Gestiona la descarga e ingesta desde la API (Capa Bronze) con control interactivo
-en bloque, preserva metadatos temporales de raíz, reporta estaciones sin patrones
-en la API, carga parquets históricos y guarda capas Silver y Gold.
+Gestiona la limpieza previa de carpetas de salida (Silver y Gold), la descarga e
+ingesta desde la API (Capa Bronze) con control interactivo en bloque, preserva
+metadatos temporales de raíz, reporta estaciones sin patrones en la API, carga
+parquets históricos y guarda capas Silver y Gold.
 """
 
 from typing import Dict, List, Optional
 from pathlib import Path
 from io import StringIO
 import json
+import shutil
+import sys
 import pandas as pd
 import requests
 
@@ -34,8 +37,49 @@ RAW_FILES_MAP = {
 
 
 # ==============================================================================
-# 0. GESTOR INTERACTIVO DE DESCARGAS EN BLOQUE (CAPA BRONZE)
+# 0. GESTIÓN DE LIMPIEZA Y DESCARGAS EN BLOQUE (I/O)
 # ==============================================================================
+
+def confirm_and_reset_output_dirs() -> None:
+    """
+    Solicita confirmación al usuario antes de iniciar el pipeline, advirtiendo
+    que se eliminarán todos los archivos existentes en data/silver y data/gold
+    para volver a generarlos desde cero. Si la respuesta es negativa, cierra el programa.
+    Borra únicamente los archivos internos para evitar bloqueos de sincronización
+    (WinError 5) en Windows o Google Drive.
+    """
+    print(
+        "\n[AVISO] Al ejecutar este pipeline se ELIMINARÁN todos los archivos "
+        f"anteriores de '{SILVER_DIR}' y '{GOLD_DIR}' y se volverán a generar desde cero."
+    )
+    respuesta = input("¿Deseas continuar y ejecutar el código? [s/N]: ").strip().lower()
+
+    if respuesta not in ["s", "si", "sí", "y", "yes"]:
+        print("[CANCELADO] Ejecución cancelada por el usuario. No se ha modificado ningún archivo.")
+        sys.exit(0)
+
+    archivos_borrados = 0
+    for folder in [SILVER_DIR, GOLD_DIR]:
+        folder.mkdir(parents=True, exist_ok=True)
+        for item in folder.iterdir():
+            try:
+                if item.is_file() or item.is_symlink():
+                    item.unlink()
+                    archivos_borrados += 1
+                elif item.is_dir():
+                    shutil.rmtree(item)
+            except PermissionError as e:
+                print(
+                    f"[ERROR] No se pudo borrar '{item.name}' porque está abierto en otro programa "
+                    "(Excel, VS Code, etc.). Ciérralo e inténtalo de nuevo."
+                )
+                raise e
+
+    print(
+        f" [OK] Limpieza completada ({archivos_borrados} archivos anteriores "
+        f"eliminados en '{SILVER_DIR.name}/' y '{GOLD_DIR.name}/')."
+    )
+
 
 def resolve_download_mode(force_download: Optional[bool] = None) -> bool:
     """

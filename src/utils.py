@@ -57,8 +57,14 @@ def safe_local_timestamp(series: pd.Series, timezone: str = "Europe/Madrid") -> 
             series.astype(str)
             .replace({"None": pd.NA, "nan": pd.NA, "NaT": pd.NA, "": pd.NA})
             .str.replace(r"\s*\([^)]*\)", "", regex=True)
+            .str.strip()
         )
-        dt_series = pd.to_datetime(cleaned, errors="coerce", utc=True)
+        dt_series = pd.to_datetime(cleaned, format="ISO8601", errors="coerce", utc=True)
+        missing_mask = dt_series.isna() & cleaned.notna()
+        if missing_mask.any():
+            dt_series.loc[missing_mask] = pd.to_datetime(
+                cleaned.loc[missing_mask], errors="coerce", utc=True
+            )
 
     return dt_series.dt.tz_convert(timezone)
 
@@ -149,7 +155,7 @@ def evaluar_cobertura_scheduler(
     else:
         estaciones_df = df[[station_id_col]].dropna().drop_duplicates()
 
-    # Acotar al periodo operativo real del scheduler (evita arrastrar meses previos del CSV macro)
+    # Acotar al periodo operativo real del scheduler
     min_f, max_f = df["fecha"].min(), df["fecha"].max()
     if df_calendar is not None and not df_calendar.empty and "date" in df_calendar.columns:
         cal_dates = safe_local_timestamp(df_calendar["date"]).dt.floor("D").dropna().unique()

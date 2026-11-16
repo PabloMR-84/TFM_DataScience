@@ -234,6 +234,8 @@ def clean_history(df_raw: pd.DataFrame) -> pd.DataFrame:
     """
     Limpia el histórico macro diario de la ciudad (bizi_history_raw.csv).
     - Homogeneiza la columna date a la zona horaria Europe/Madrid.
+    - Define window_end (cierre de la jornada diaria = date + 1 día si no viene
+      explícito) y conserva generated_at si existe en el CSV.
     - Conserva nulos reales sin rellenar con cero.
     """
     if df_raw.empty:
@@ -247,17 +249,31 @@ def clean_history(df_raw: pd.DataFrame) -> pd.DataFrame:
         "avgOccupancy": "city_avg_occupancy",
         "balanceIndex": "balance_index",
         "sampleCount": "sample_count",
+        "windowStart": "window_start",
+        "windowEnd": "window_end",
+        "generatedAt": "generated_at",
+        "updatedAt": "generated_at",
     }
     df.rename(columns=rename_dict, inplace=True)
 
     time_col = "date_str" if "date_str" in df.columns else df.columns[0]
     parsed_dates = pd.to_datetime(df[time_col], errors="coerce")
     if parsed_dates.dt.tz is None:
-        df["date"] = parsed_dates.dt.tz_localize("Europe/Madrid")
+        df["date"] = parsed_dates.dt.tz_localize("Europe/Madrid").dt.floor("D")
     else:
-        df["date"] = parsed_dates.dt.tz_convert("Europe/Madrid")
+        df["date"] = parsed_dates.dt.tz_convert("Europe/Madrid").dt.floor("D")
 
     df["date_key"] = df["date"].dt.strftime("%Y%m%d").astype("Int64")
+
+    if "window_end" in df.columns:
+        df["window_end"] = safe_local_timestamp(df["window_end"]).fillna(
+            df["date"] + pd.Timedelta(days=1)
+        )
+    else:
+        df["window_end"] = df["date"] + pd.Timedelta(days=1)
+
+    if "generated_at" in df.columns:
+        df["generated_at"] = safe_local_timestamp(df["generated_at"])
 
     for col in ["city_avg_occupancy", "balance_index"]:
         if col in df.columns:

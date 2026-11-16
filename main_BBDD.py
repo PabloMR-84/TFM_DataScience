@@ -2,13 +2,15 @@
 main_BBDD.py
 ------------
 Orquestador principal del pipeline ETL / Arquitectura Medallón (SmartRebalance ZGZ).
-Ejecuta la ingesta en Bronze, las transformaciones y validaciones de rango en Silver,
-el modelado dimensional unificado en Gold (con diagnóstico explícito de Cold Start)
-y los controles de cardinalidad y cobertura operativa de capturas.
+Ejecuta la confirmación de regeneración limpia de Silver y Gold, la ingesta en Bronze,
+las transformaciones y validaciones de rango en Silver, el modelado dimensional
+unificado en Gold (con diagnóstico explícito de Cold Start y prevención estricta de
+fuga temporal en rankings, patrones y contexto diario) y los controles de
+cardinalidad y cobertura operativa de capturas.
 """
 
-from src.config import RAW_DIR, SILVER_DIR, GOLD_DIR
 from src.io import (
+    confirm_and_reset_output_dirs,
     fetch_all_raw_data,
     load_historical_parquets,
     save_silver_df,
@@ -39,6 +41,11 @@ def main():
     print("=" * 70)
     print("INICIANDO PIPELINE MODULAR SMARTREBALANCE ZGZ (BRONZE - SILVER - GOLD)")
     print("=" * 70)
+
+    # ==========================================================================
+    # 0. CONFIRMACIÓN Y LIMPIEZA DE ARCHIVOS PREVIOS (SILVER Y GOLD)
+    # ==========================================================================
+    confirm_and_reset_output_dirs()
 
     # ==========================================================================
     # 1. INGESTA CAPA BRONZE
@@ -82,6 +89,7 @@ def main():
         df_stations_gold=df_dim_stations,
         df_patterns_gold=df_dim_patterns,
         df_rankings_silver=df_rankings_silver,
+        df_history_silver=df_history_silver,
     )
 
     auditar_merge(

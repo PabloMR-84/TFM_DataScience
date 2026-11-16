@@ -27,11 +27,11 @@ ESPECIFICACIÓN DEL OBJETIVO PREDICTIVO, HORIZONTE Y MATRIZ DE VARIABLES
    - Verdad Observada (Targets): bikes_available, anchors_free, occupancy_pct.
    - Extrapolación Cold Start (Separada): occupancy_estimated (nunca sustituye
      a occupancy_pct como verdad de evaluación).
-   - Contexto Temporal / Macro (Disponible <= D-1): day_type_effective,
+   - Contexto Temporal / Macro (Disponible <= t): day_type_effective,
      is_holiday, is_weekend, demand_score, city_avg_occupancy, balance_index.
-   - Perfiles Basales (Dim_Patterns): occupancy_avg, bikes_avg.
-   - Indicadores Operativos (Rankings): turnover_score, empty_hours,
-     full_hours, problem_hours (sin imputación artificial con ceros).
+   - Perfiles Basales (Dim_Patterns, disponible <= t): occupancy_avg, bikes_avg.
+   - Indicadores Operativos (Rankings, disponible <= t): turnover_score,
+     empty_hours, full_hours, problem_hours (sin fallbacks ni relleno con ceros).
 ==============================================================================
 """
 
@@ -41,6 +41,27 @@ import pandas as pd
 import requests
 
 from src.utils import safe_local_timestamp
+
+
+def _compute_available_at(df: pd.DataFrame, timezone: str = "Europe/Madrid") -> pd.Series:
+    """
+    Calcula el instante exacto en que un registro pasa a estar disponible,
+    exigiendo que haya finalizado tanto su periodo (window_end) como su
+    publicación (generated_at). Si ambos existen, toma el máximo (el más tardío).
+    Si ninguno existe, devuelve NaT para evitar asumir disponibilidad futura.
+    """
+    if df.empty:
+        return pd.Series(dtype=f"datetime64[ns, {timezone}]")
+
+    candidates = []
+    for col in ["window_end", "generated_at"]:
+        if col in df.columns:
+            candidates.append(safe_local_timestamp(df[col], timezone=timezone))
+
+    if not candidates:
+        return pd.Series(pd.NaT, index=df.index, dtype=f"datetime64[ns, {timezone}]")
+
+    return pd.concat(candidates, axis=1).max(axis=1)
 
 
 def build_dim_stations(df_stations_silver: pd.DataFrame) -> pd.DataFrame:
@@ -65,7 +86,7 @@ def build_dim_stations(df_stations_silver: pd.DataFrame) -> pd.DataFrame:
 def build_dim_patterns(df_patterns_silver: pd.DataFrame) -> pd.DataFrame:
     """
     Construye la dimensión de patrones horarios basales (Dim_Patterns),
-    conservando generated_at / window_end como metadatos de auditoría.
+    conservando generated_at, window_end y available_at para filtrar por disponibilidad.
     """
     if df_patterns_silver.empty:
         return pd.DataFrame()
@@ -89,12 +110,13 @@ def build_dim_patterns(df_patterns_silver: pd.DataFrame) -> pd.DataFrame:
     df_dim["station_id"] = df_dim["station_id"].astype("Int64")
     df_dim["hour"] = df_dim["hour"].astype("Int64")
     df_dim["day_type"] = df_dim["day_type"].astype(str).str.upper().str.strip()
+    df_dim["available_at"] = _compute_available_at(df_dim)
 
-    if "generated_at" in df_dim.columns:
-        df_dim.sort_values("generated_at", inplace=True)
+    if df_dim["available_at"].notna().any():
+        df_dim.sort_values("available_at", inplace=True)
 
     df_dim = df_dim.drop_duplicates(
-        subset=["station_id", "day_type", "hour"], keep="last"
+        subset=["station_id", "day_type", "hour", "available_at"], keep="last"
     ).reset_index(drop=True)
     return df_dim
 
@@ -150,9 +172,10 @@ def build_dim_calendar(
 ) -> pd.DataFrame:
     """
     Construye Dim_Calendar homogeneizando todas las fechas en Europe/Madrid.
-    Para evitar fuga de información intra-día (data leakage), el contexto macro
-    diario (demand_score, city_avg_occupancy, balance_index) se une mediante
-    merge_asof estricto hacia atrás (allow_exact_matches=False: día D solo ve <= D-1).
+    Para evitar fuga de información (data leakage), el contexto macro diario
+    (demand_score, city_avg_occupancy, balance_index) se une comprobando tanto
+    el fin de la jornada diaria (window_end = date + 1 día) como su publicación
+    (generated_at) mediante available_at <= date.
     """
     candidate_dates = []
     if not df_snapshots.empty and "date" in df_snapshots.columns:
@@ -196,23 +219,46 @@ def build_dim_calendar(
     ] = "WEEKEND"
 
     if df_history_silver is not None and not df_history_silver.empty and "date" in df_history_silver.columns:
-        history_cols = ["date", "demand_score", "city_avg_occupancy", "balance_index"]
+        history_cols = [
+            "date",
+            "window_end",
+            "generated_at",
+            "demand_score",
+            "city_avg_occupancy",
+            "balance_index",
+        ]
         existing_hist = [c for c in history_cols if c in df_history_silver.columns]
 
         df_hist_sorted = df_history_silver[existing_hist].dropna(subset=["date"]).copy()
         df_hist_sorted["date"] = safe_local_timestamp(df_hist_sorted["date"]).dt.floor("D")
+        if "window_end" not in df_hist_sorted.columns:
+            df_hist_sorted["window_end"] = df_hist_sorted["date"] + pd.Timedelta(days=1)
+        else:
+            df_hist_sorted["window_end"] = safe_local_timestamp(df_hist_sorted["window_end"]).fillna(
+                df_hist_sorted["date"] + pd.Timedelta(days=1)
+            )
+
+        df_hist_sorted["history_available_at"] = _compute_available_at(df_hist_sorted)
         df_hist_sorted = (
-            df_hist_sorted.sort_values("date")
+            df_hist_sorted.dropna(subset=["history_available_at"])
+            .sort_values("history_available_at")
             .drop_duplicates(subset=["date"], keep="last")
             .reset_index(drop=True)
         )
 
+        merge_hist_cols = [
+            c
+            for c in ["history_available_at", "demand_score", "city_avg_occupancy", "balance_index"]
+            if c in df_hist_sorted.columns
+        ]
+
         df_calendar = pd.merge_asof(
             df_calendar.sort_values("date"),
-            df_hist_sorted,
-            on="date",
+            df_hist_sorted[merge_hist_cols],
+            left_on="date",
+            right_on="history_available_at",
             direction="backward",
-            allow_exact_matches=False,
+            allow_exact_matches=True,
         )
 
     return df_calendar
@@ -311,14 +357,14 @@ def build_gold_dataset(
     df_stations_gold: pd.DataFrame,
     df_patterns_gold: pd.DataFrame,
     df_rankings_silver: Optional[pd.DataFrame] = None,
+    df_history_silver: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """
     Unifica las dimensiones y la tabla de hechos en el dataset Gold final (df_gold):
-    - Impone validate='m:1' en los cruces dimensionales para impedir duplicaciones.
-    - Blindaje de tipos Float64 -> float64 antes de acotar occupancy_pct.
-    - Conserva Dim_Patterns como perfil basal estructural (m:1) evitando borrar
-      el historial cuando la descarga de la API es posterior a los parquets.
-    - Notifica explícitamente en consola y en cold_start_status las estaciones sin datos.
+    - Impone validate='m:1' en los cruces dimensionales estáticos para impedir duplicaciones.
+    - Exige disponibilidad temporal estricta (max(window_end, generated_at) <= timestamp)
+      SIN fallbacks ni rellenos con ceros en rankings, patrones y datos diarios de ciudad.
+    - Mantiene occupancy_pct (observada) separada de occupancy_estimated (extrapolada).
     """
     if df_snapshots_gold.empty:
         return pd.DataFrame()
@@ -343,6 +389,43 @@ def build_gold_dataset(
             validate="m:1",
         )
 
+    # 1b. Refuerzo de disponibilidad temporal exacta (timestamp >= available_at) en datos diarios de ciudad
+    city_metrics = ["demand_score", "city_avg_occupancy", "balance_index"]
+    if df_history_silver is not None and not df_history_silver.empty and "date" in df_history_silver.columns:
+        exist_city = [c for c in city_metrics if c in df_history_silver.columns]
+        if exist_city and "timestamp" in df_gold.columns:
+            df_gold.drop(columns=exist_city, errors="ignore", inplace=True)
+            hist_tmp = df_history_silver.copy()
+            hist_tmp["date"] = safe_local_timestamp(hist_tmp["date"]).dt.floor("D")
+            if "window_end" not in hist_tmp.columns:
+                hist_tmp["window_end"] = hist_tmp["date"] + pd.Timedelta(days=1)
+            else:
+                hist_tmp["window_end"] = safe_local_timestamp(hist_tmp["window_end"]).fillna(
+                    hist_tmp["date"] + pd.Timedelta(days=1)
+                )
+            hist_tmp["available_at"] = _compute_available_at(hist_tmp)
+            valid_hist = (
+                hist_tmp[["available_at"] + exist_city]
+                .dropna(subset=["available_at"])
+                .sort_values("available_at")
+                .drop_duplicates(subset=["available_at"], keep="last")
+                .reset_index(drop=True)
+            )
+            if not valid_hist.empty:
+                df_gold = df_gold.sort_values("timestamp").reset_index(drop=True)
+                df_gold = pd.merge_asof(
+                    df_gold,
+                    valid_hist,
+                    left_on="timestamp",
+                    right_on="available_at",
+                    direction="backward",
+                    allow_exact_matches=True,
+                )
+                df_gold.drop(columns=["available_at"], errors="ignore", inplace=True)
+            else:
+                for col in exist_city:
+                    df_gold[col] = np.nan
+
     # 2. Cruce con Dim_Stations (m:1 estricto)
     if not df_stations_gold.empty:
         st_cols = ["station_id", "name", "latitude", "longitude", "capacity"]
@@ -365,90 +448,101 @@ def build_gold_dataset(
     else:
         df_gold["occupancy_pct"] = np.nan
 
-    # 4. Cruce con Dim_Patterns (perfil basal estructural m:1)
-    if not df_patterns_gold.empty and "day_type_effective" in df_gold.columns:
-        pat_cols = [
-            c
-            for c in ["station_id", "day_type", "hour", "occupancy_avg", "bikes_avg"]
-            if c in df_patterns_gold.columns
-        ]
-        df_gold = df_gold.merge(
-            df_patterns_gold[pat_cols],
-            left_on=["station_id", "day_type_effective", "hour"],
-            right_on=["station_id", "day_type", "hour"],
-            how="left",
-            validate="m:1",
-        )
-        df_gold.drop(columns=["day_type"], errors="ignore", inplace=True)
+    # 4. Cruce con Dim_Patterns con disponibilidad temporal estricta (available_at <= timestamp, sin fallbacks)
+    pat_metrics = ["occupancy_avg", "bikes_avg"]
+    for col in pat_metrics:
+        df_gold[col] = np.nan
 
-    # 5. Cruce con Rankings (merge_asof histórico si hay snapshots previos; cruce m:1 si es referencia única posterior)
+    if (
+        not df_patterns_gold.empty
+        and "day_type_effective" in df_gold.columns
+        and "timestamp" in df_gold.columns
+    ):
+        pat = df_patterns_gold.copy()
+        avail_pat_metrics = [c for c in pat_metrics if c in pat.columns]
+        pat["available_at"] = (
+            safe_local_timestamp(pat["available_at"])
+            if "available_at" in pat.columns
+            else _compute_available_at(pat)
+        )
+
+        valid_pat = (
+            pat[["station_id", "day_type", "hour", "available_at"] + avail_pat_metrics]
+            .dropna(subset=["station_id", "day_type", "hour", "available_at"])
+            .copy()
+        )
+
+        if not valid_pat.empty:
+            df_gold.drop(columns=avail_pat_metrics, errors="ignore", inplace=True)
+            df_gold["_st_id_key"] = df_gold["station_id"].astype("int64")
+            df_gold["_day_type_key"] = df_gold["day_type_effective"].astype(str).str.upper().str.strip()
+            df_gold["_hour_key"] = df_gold["hour"].astype("int64")
+
+            valid_pat["_st_id_key"] = valid_pat["station_id"].astype("int64")
+            valid_pat["_day_type_key"] = valid_pat["day_type"].astype(str).str.upper().str.strip()
+            valid_pat["_hour_key"] = valid_pat["hour"].astype("int64")
+
+            valid_pat = (
+                valid_pat.sort_values("available_at")
+                .drop_duplicates(subset=["_st_id_key", "_day_type_key", "_hour_key", "available_at"], keep="last")
+                .reset_index(drop=True)
+            )
+            df_gold = df_gold.sort_values("timestamp").reset_index(drop=True)
+
+            df_gold = pd.merge_asof(
+                df_gold,
+                valid_pat[["_st_id_key", "_day_type_key", "_hour_key", "available_at"] + avail_pat_metrics],
+                left_on="timestamp",
+                right_on="available_at",
+                by=["_st_id_key", "_day_type_key", "_hour_key"],
+                direction="backward",
+                allow_exact_matches=True,
+            )
+            df_gold.drop(
+                columns=["_st_id_key", "_day_type_key", "_hour_key", "available_at"],
+                errors="ignore",
+                inplace=True,
+            )
+
+    # 5. Cruce con Rankings con disponibilidad temporal estricta (available_at <= timestamp, SIN fallback)
     rk_metrics = ["turnover_score", "empty_hours", "full_hours", "problem_hours"]
     for col in rk_metrics:
         if col not in df_gold.columns:
             df_gold[col] = np.nan
 
-    if df_rankings_silver is not None and not df_rankings_silver.empty:
+    if df_rankings_silver is not None and not df_rankings_silver.empty and "timestamp" in df_gold.columns:
         rk = df_rankings_silver.copy()
         avail_rk_metrics = [c for c in rk_metrics if c in rk.columns]
+        rk["available_at"] = _compute_available_at(rk)
 
-        ref_col = None
-        if "window_end" in rk.columns and rk["window_end"].notna().any():
-            ref_col = "window_end"
-        elif "generated_at" in rk.columns and rk["generated_at"].notna().any():
-            ref_col = "generated_at"
+        valid_rk = (
+            rk[["station_id", "available_at"] + avail_rk_metrics]
+            .dropna(subset=["station_id", "available_at"])
+            .copy()
+        )
 
-        if ref_col is not None and avail_rk_metrics and "timestamp" in df_gold.columns:
-            rk[ref_col] = safe_local_timestamp(rk[ref_col])
+        if not valid_rk.empty and avail_rk_metrics:
+            df_gold.drop(columns=avail_rk_metrics, errors="ignore", inplace=True)
+            df_gold["_st_id_key"] = df_gold["station_id"].astype("int64")
+            valid_rk["_st_id_key"] = valid_rk["station_id"].astype("int64")
+
             valid_rk = (
-                rk[["station_id", ref_col] + avail_rk_metrics]
-                .dropna(subset=["station_id", ref_col])
-                .copy()
+                valid_rk.sort_values("available_at")
+                .drop_duplicates(subset=["_st_id_key", "available_at"], keep="last")
+                .reset_index(drop=True)
             )
+            df_gold = df_gold.sort_values("timestamp").reset_index(drop=True)
 
-            if not valid_rk.empty:
-                df_gold.drop(columns=avail_rk_metrics, errors="ignore", inplace=True)
-                min_rk_ts = valid_rk[ref_col].min()
-                max_snap_ts = df_gold["timestamp"].max()
-
-                if min_rk_ts <= max_snap_ts:
-                    # Existen instantáneas históricas previas: alineación temporal estricta hacia atrás
-                    df_gold["_st_id_key"] = df_gold["station_id"].astype("int64")
-                    valid_rk["_st_id_key"] = valid_rk["station_id"].astype("int64")
-
-                    valid_rk = (
-                        valid_rk.sort_values(ref_col)
-                        .drop_duplicates(subset=["_st_id_key", ref_col], keep="last")
-                        .reset_index(drop=True)
-                    )
-                    df_gold = df_gold.sort_values("timestamp").reset_index(drop=True)
-
-                    df_gold = pd.merge_asof(
-                        df_gold,
-                        valid_rk[["_st_id_key", ref_col] + avail_rk_metrics],
-                        left_on="timestamp",
-                        right_on=ref_col,
-                        by="_st_id_key",
-                        direction="backward",
-                        allow_exact_matches=True,
-                    )
-                    df_gold.drop(columns=["_st_id_key", ref_col], errors="ignore", inplace=True)
-                else:
-                    # Única instantánea descargada después de los parquets: cruce estructural m:1
-                    print(
-                        f"[INFO RANKINGS] La descarga de rankings ({min_rk_ts.strftime('%Y-%m-%d %H:%M')}) "
-                        f"es posterior al último snapshot ({max_snap_ts.strftime('%Y-%m-%d %H:%M')}). "
-                        "Se aplica cruce estructural por estación (m:1)."
-                    )
-                    rk_latest = (
-                        valid_rk.sort_values(ref_col)
-                        .drop_duplicates(subset=["station_id"], keep="last")
-                    )
-                    df_gold = df_gold.merge(
-                        rk_latest[["station_id"] + avail_rk_metrics],
-                        on="station_id",
-                        how="left",
-                        validate="m:1",
-                    )
+            df_gold = pd.merge_asof(
+                df_gold,
+                valid_rk[["_st_id_key", "available_at"] + avail_rk_metrics],
+                left_on="timestamp",
+                right_on="available_at",
+                by="_st_id_key",
+                direction="backward",
+                allow_exact_matches=True,
+            )
+            df_gold.drop(columns=["_st_id_key", "available_at"], errors="ignore", inplace=True)
 
     # 6. Extrapolación Cold Start en columna SEPARADA (occupancy_estimated) y trazabilidad
     if "occupancy_avg" in df_gold.columns:
