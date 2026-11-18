@@ -11,7 +11,7 @@ temporales a la zona horaria Europe/Madrid.
 import numpy as np
 import pandas as pd
 
-from src.utils import parse_dict_field, safe_local_timestamp
+from etl.utils import parse_dict_field, safe_local_timestamp
 
 
 def clean_stations(df_raw: pd.DataFrame) -> pd.DataFrame:

@@ -5,7 +5,6 @@ Todos los cambios notables en este proyecto serán documentados en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/),
 y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
-## [Unreleased]
 
 ## [0.2.1] - 2026-11-16
 
@@ -25,3 +24,14 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 ### Fixed
 - **Compatibilidad de borrado en Windows / Google Drive (`src/io.py`):** Eliminación individual de ficheros internos (`Path.unlink()`) en lugar de destruir los directorios raíz con `shutil.rmtree()`, evitando bloqueos `PermissionError: [WinError 5]` en carpetas sincronizadas.
 - **Parseo de marcas temporales (`src/utils.py`):** Ajuste en `safe_local_timestamp()` con formato `ISO8601` y *fallback* controlado para evitar advertencias de inferencia en consola.
+
+
+## [Unreleased]
+
+### Added
+- **Empaquetado estándar MLOps (`pyproject.toml`):** Configuración del proyecto como paquete instalable en modo editable (`pip install -e .`) bajo el layout `src/`, permitiendo importaciones limpias (`from etl...`, `from modeling...`) desde scripts, notebooks y tests sin alterar `sys.path`.
+- **Separación de dominios en `src/`:** Creación de los subpaquetes `src/etl/` (ingeniería de datos) y `src/modeling/` (preparado para *feature engineering* y modelos predictivos), junto con el directorio `scripts/` para los orquestadores de ejecución.
+
+### Changed
+- **Reorganización del pipeline ETL (`src/etl/` y `scripts/main_BBDD.py`):** Traslado de `config.py`, `io.py`, `cleaning.py`, `models_gold.py` y `utils.py` a `src/etl/`, y reubicación de `main_BBDD.py` en `scripts/`, actualizando todas las importaciones internas al nuevo espacio de nombres.
+- **Ajuste de ruta raíz (`src/etl/config.py`):** Actualización de `ROOT_DIR` a `Path(__file__).resolve().parents[2]` tras bajar un nivel en la jerarquía de directorios.

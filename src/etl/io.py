@@ -17,7 +17,7 @@ import sys
 import pandas as pd
 import requests
 
-from src.config import (
+from etl.config import (
     HEADERS,
     BASE_URL,
     RAW_DIR,

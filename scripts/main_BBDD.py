@@ -9,14 +9,14 @@ fuga temporal en rankings, patrones y contexto diario) y los controles de
 cardinalidad y cobertura operativa de capturas.
 """
 
-from src.io import (
+from etl.io import (
     confirm_and_reset_output_dirs,
     fetch_all_raw_data,
     load_historical_parquets,
     save_silver_df,
     save_gold_df,
 )
-from src.cleaning import (
+from etl.cleaning import (
     clean_stations,
     clean_rebalancing,
     clean_rankings,
@@ -24,14 +24,14 @@ from src.cleaning import (
     clean_history,
     clean_historical_snapshots,
 )
-from src.models_gold import (
+from etl.models_gold import (
     build_dim_stations,
     build_dim_patterns,
     build_dim_calendar,
     build_fact_snapshots,
     build_gold_dataset,
 )
-from src.utils import (
+from etl.utils import (
     auditar_merge,
     evaluar_cobertura_scheduler,
 )

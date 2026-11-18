@@ -40,7 +40,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-from src.utils import safe_local_timestamp
+from etl.utils import safe_local_timestamp
 
 
 def _compute_available_at(df: pd.DataFrame, timezone: str = "Europe/Madrid") -> pd.Series:

@@ -24,7 +24,7 @@ BASE_URL: str = "https://datosbizi.com/api"
 # 3. GESTIÓN DE RUTAS Y DIRECTORIOS (MEDALLION ARCHITECTURE)
 # ==============================================================================
 # config.py ubicado en TFM/src/config.py -> ROOT_DIR apunta a TFM/
-ROOT_DIR: Path = Path(__file__).resolve().parents[1]
+ROOT_DIR: Path = Path(__file__).resolve().parents[2]  # Directorio raíz del proyecto (TFM/)
 
 # Rutas de almacenamiento de datos
 DATA_DIR: Path = ROOT_DIR / "data"
