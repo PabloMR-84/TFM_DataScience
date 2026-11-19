@@ -5,7 +5,24 @@ Todos los cambios notables en este proyecto serán documentados en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/),
 y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
+
 ## [Unreleased]
+
+
+## [0.3.1] - 2026-11-19
+
+### Added
+- **Modelado predictivo multi-horizonte (`notebooks/modelo_predictivo.ipynb`):** Cuaderno experimental completo con ingeniería de características *anti-leakage*, partición cronológica con embargo de $3\text{ horas}$, comparativa frente a *baselines* (*Naive*, Perfil Histórico Causal y Ridge), selección de `LightGBMRegressor` ($+1\text{ h}, +2\text{ h}, +3\text{ h}$), ajuste bayesiano con Optuna, evaluación ciega en *Test* y explicabilidad global mediante SHAP.
+- **Documentación de la Entrega 03 (`docs/entregas/entrega_03_machine_learning.md`):** Memoria técnica completa con planteamiento del problema, arquitectura de datos, métricas de validación/test, auditoría de errores y contrato de salida para el optimizador de rutas.
+- **Reproducibilidad experimental (`data/gold_snapshot_ml_20261115/` y `notebooks/README.md`):** Estructura rastreada mediante `.gitkeep` para aislar la instantánea congelada de la Capa Gold (`31/10/2026` – `15/11/2026`) junto con la guía de descarga desde Google Drive.
+- **Dependencias de Machine Learning (`requirements.txt`):** Incorporación de las librerías de entrenamiento, optimización y explicabilidad (`scikit-learn`, `lightgbm`, `xgboost`, `optuna`, `shap`, entre otras).
+- **Empaquetado estándar MLOps (`pyproject.toml`):** Configuración del proyecto como paquete instalable en modo editable (`pip install -e .`) bajo el layout `src/`, permitiendo importaciones limpias (`from etl...`, `from modeling...`) desde scripts y notebooks.
+- **Separación de dominios en `src/`:** Creación de los subpaquetes `src/etl/` (ingeniería de datos) y `src/modeling/` (preparado para la modularización futura de producción), junto con el directorio `scripts/` para los orquestadores.
+
+### Changed
+- **Documentación principal y control de versiones (`README.md` y `.gitignore`):** Actualización del esquema de directorios e instrucciones de instalación con `requirements.txt` en `README.md`, y blindaje de `.gitignore` frente a ficheros `.parquet`, `.csv` y archivos de sincronización (`desktop.ini`), manteniendo rastreada la carpeta del *snapshot* de ML.
+- **Reorganización del pipeline ETL (`src/etl/` y `scripts/main_BBDD.py`):** Traslado de `config.py`, `io.py`, `cleaning.py`, `models_gold.py` y `utils.py` a `src/etl/`, reubicación de `main_BBDD.py` en `scripts/` y actualización de `ROOT_DIR` en `src/etl/config.py` (`parents[2]`).
+
 
 ## [0.2.1] - 2026-11-16
 

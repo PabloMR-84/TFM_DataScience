@@ -1,10 +1,38 @@
-
+# ==============================================================================
+# 1. ENTORNO VIRTUAL, SECRETOS Y CACHÉ DE PYTHON / JUPYTER
+# ==============================================================================
 .env
 .venv/
 __pycache__/
+*.py[cod]
+*.egg-info/
 .ipynb_checkpoints/
 
+# ==============================================================================
+# 2. DATOS Y ARCHIVOS PARQUET (EXCEPTO ESTRUCTURA DE SNAPSHOT CONGELADO)
+# ==============================================================================
+# Ignoramos todos los ficheros de datos pesados y capas vivas
+*.parquet
+*.csv
+data/raw/
+data/silver/
+data/gold/
 
+# Permitimos subir la carpeta vacía del snapshot de ML y su archivo marcador
+!data/gold_snapshot_ml_20261115/
+!data/gold_snapshot_ml_20261115/.gitkeep
+
+# ==============================================================================
+# 3. DOCUMENTACIÓN COMPILADA Y ARCHIVOS AUXILIARES DEL PROYECTO
+# ==============================================================================
 *.pdf
-docs/entregas/notebook.ipynb
+material/
+data_EDA/
+notebooks/BBDD/
 
+# ==============================================================================
+# 4. ARCHIVOS DEL SISTEMA OPERATIVO / GOOGLE DRIVE DESKTOP
+# ==============================================================================
+desktop.ini
+Thumbs.db
+.DS_Store
