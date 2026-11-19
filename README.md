@@ -4,31 +4,80 @@
 
 ```text
 TFM/
-├── assets/                   # Imágenes, capturas y recursos visuales para la documentación (README)
+├── .github/
+│   └── workflows/
+│       └── extract.yml             # Automatización de captura periódica cada 10 min (GitHub Actions)
+│
+├── assets/                         # Imágenes, capturas y recursos visuales para la documentación (README)
 │
 ├── data/
-│   ├── raw/                  # Archivos en bruto descargados de la API de DatosBizi
-│   │   ├── historical/       # Subcarpeta para snapshots históricos en formato .parquet
-│   │   ├── stations_raw.json # Maestro estático y estado instantáneo
-│   │   ├── rankings_raw.json # Indicadores acumulados de estrés
-│   │   ├── rebalancing_raw.json # Recomendaciones logísticas operativas
-│   │   ├── patterns_raw.json # Basales de ocupación horaria
-│   │   └── bizi_history_raw.csv # Contexto macro temporal a nivel de ciudad
-│   ├── silver/               # DataFrames estandarizados y limpios (csv/parquet)
-│   └── gold/                 # Tablas dimensionales, hechos y df_gold final (parquet)
+│   ├── raw/                        # Archivos en bruto descargados de la API de DatosBizi
+│   ├── silver/                     # DataFrames estandarizados y limpios (csv/parquet)
+│   ├── gold/                       # Tablas dimensionales, hechos y df_gold final (parquet)
+│   └── gold_snapshot_ml_20261115/  # Snapshot congelado de datos para reproducibilidad en notebooks/
 │
-├── src/                      # Código modular de ingeniería de datos
-│   ├── __init__.py           # Inicializador del paquete src/
-│   ├── config.py             # Configuración central (endpoints, variables de entorno, ROOT_DIR)
-│   ├── utils.py              # Herramientas de soporte (parseo de JSON, conversión de tipos, timestamps)
-│   ├── io.py                 # Orquestador I/O (descarga interactiva o caché, persistencia)
-│   ├── cleaning.py           # Estandarización pura de esquemas (Capa Silver)
-│   ├── models_gold.py        # Modelo dimensional, API de festivos y extrapolación de Cold Start
-│   └── features.py           # (Reservado para Feature Engineering en fase ML)
+├── docs/                           # Documentación técnica y entregables del proyecto
 │
-├── main_BBDD.py              # Script ejecutable principal del pipeline ETL
-├── .env                      # Variables de entorno seguras (BIZI_API_KEY)
-└── README.md                 # Documentación y alcance del proyecto
+├── notebooks/                      # Cuadernos de modelado predictivo, evaluación y explicabilidad SHAP
+│   ├── modelo_predictivo.ipynb     # Cuaderno principal de experimentación y validación ML (+1h, +2h, +3h)
+│   └── README.md                   # Instrucciones de descarga del snapshot de datos desde Drive
+│
+├── scripts/                        # Scripts ejecutables y orquestadores de pipelines
+│   └── main_BBDD.py                # Script principal del pipeline ETL (Bronze -> Silver -> Gold)
+│
+├── src/                            # Código fuente empaquetado del proyecto
+│   ├── __init__.py                 # Inicializador del paquete principal
+│   ├── etl/                        # Módulo de ingeniería de datos y construcción de Capa Gold
+│   │   ├── __init__.py             # Exportaciones públicas del subpaquete etl
+│   │   ├── config.py               # Configuración central (endpoints, variables de entorno, ROOT_DIR)
+│   │   ├── utils.py                # Herramientas de soporte (parseo de JSON, tipos, timestamps)
+│   │   ├── io.py                   # Orquestador I/O (descarga interactiva o caché, persistencia)
+│   │   ├── cleaning.py             # Estandarización pura de esquemas (Capa Silver)
+│   │   └── models_gold.py          # Modelo dimensional, API de festivos y extrapolación Cold Start
+│   └── modeling/                   # Módulo de Machine Learning (en desarrollo)
+│       └── __init__.py             # Inicializador del subpaquete modeling
+│
+├── .env                            # Variables de entorno seguras (BIZI_API_KEY)
+├── .gitignore                      # Exclusiones de control de versiones (datos, entornos, temporales)
+├── CHANGELOG.md                    # Registro cronológico de versiones y cambios del proyecto
+├── CONTRIBUTING.md                 # Guía y convenciones de contribución al repositorio
+├── extract.py                      # Script ligero de captura periódica automatizada (GitHub Actions)
+├── LICENSE                         # Licencia del repositorio
+├── pyproject.toml                  # Configuración de empaquetado y metadatos del proyecto
+├── README.md                       # Documentación general, instalación y configuración
+└── requirements.txt                # Dependencias y librerías necesarias para ejecutar el proyecto
+```
+
+---
+
+## Requisitos e Instalación
+
+### 1. Requisitos previos
+
+* **Python 3.10** o superior.
+* **Git** para la gestión del repositorio.
+
+### 2. Creación del entorno virtual e instalación de dependencias
+
+Desde la raíz del proyecto (`TFM/`), crea y activa un entorno virtual, instala las dependencias definidas en `requirements.txt` y registra el proyecto en **modo editable** (`-e .`) para que Python reconozca los paquetes internos (`etl` y `modeling`) desde cualquier script o cuaderno:
+
+```bash
+# 1. Crear el entorno virtual
+python -m venv .venv
+
+# 2. Activar el entorno virtual
+# En Windows (Git Bash / MINGW64):
+source .venv/Scripts/activate
+# En Windows (PowerShell):
+# .venv\Scripts\Activate.ps1
+# En Linux / macOS:
+# source .venv/bin/activate
+
+# 3. Instalar las dependencias del proyecto
+pip install -r requirements.txt
+
+# 4. Instalar el paquete local en modo editable
+pip install -e .
 ```
 
 ---
@@ -55,8 +104,6 @@ Para realizar descargas en vivo de datasets extensos (como el histórico macro e
 
 5. **Copiar la clave:**  
    Copia la API Key alfanumérica resultante que se mostrará en pantalla.
-
----
 
 ### Configuración del archivo local `.env`:
 
