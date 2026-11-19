@@ -28,7 +28,7 @@ Partiendo de la **Capa Gold** consolidada en la Entrega 02 (`df_gold.parquet`, c
 
 Para cada estación $s$ e instante de consulta $t$, se entrenan tres modelos independientes correspondientes a los horizontes tácticos $h \in \{1\text{ h}, 2\text{ h}, 3\text{ h}\}$:
 
-* **`target_occ_1h`, `target_occ_2h`, `target_occ_3h`:** Porcentaje de ocupación física real observada (`occupancy_pct` $= \text{bikes\_available} / \text{capacity} \in [0, 1]$) exactamente $6$, $12$ y $18$ pasos de 10 minutos en el futuro.
+* **`target_occ_1h`, `target_occ_2h`, `target_occ_3h`:** Porcentaje de ocupación física real observada (`occupancy_pct = bikes_available / capacity`, con valores en $[0, 1]$) exactamente $6$, $12$ y $18$ pasos de 10 minutos en el futuro.
 
 * **Desacoplamiento de recomendaciones externas:** Los valores sugeridos por la API de origen (`bikesToMove`) nunca se emplean como verdad observada (*ground truth*).
 
