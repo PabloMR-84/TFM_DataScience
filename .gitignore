@@ -14,9 +14,11 @@ __pycache__/
 # Ignoramos todos los ficheros de datos pesados y capas vivas
 *.parquet
 *.csv
-data/raw/
 data/silver/
 data/gold/
+
+data/raw/*
+!data/raw/historical/
 
 # Permitimos subir la carpeta vacía del snapshot de ML y su archivo marcador
 !data/gold_snapshot_ml_20261115/
