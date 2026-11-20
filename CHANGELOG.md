@@ -8,6 +8,10 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Fixed
+- **Pipeline de extracción automática (`extract.py` y `.github/workflows/extract.yml`):** Incorporación de política de reintentos con *backoff* exponencial (`Retry`) ante microcortes de la API, actualización de la cabecera de autenticación (`x-api-key`), escritura atómica de ficheros Parquet y sincronización segura de `git push`.
+- **Rastreo de históricos en Git (`.gitignore`):** Adición de excepción explícita (`!data/raw/historical/*.parquet`) para permitir los *commits* automáticos del *collector* que quedaron bloqueados por la regla global `*.parquet` tras la versión `v0.3.1` (incidencia operativa registrada entre el `2026-11-19 21:50` y el `2026-11-20 17:00` CET).
+
 
 ## [0.3.1] - 2026-11-19
 
