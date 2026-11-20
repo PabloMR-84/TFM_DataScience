@@ -19,6 +19,7 @@ data/gold/
 
 data/raw/*
 !data/raw/historical/
+!data/raw/historical/*.parquet
 
 # Permitimos subir la carpeta vacía del snapshot de ML y su archivo marcador
 !data/gold_snapshot_ml_20261115/
