@@ -5,9 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "smartrebalance_zgz"
 version = "0.3.1"
-description = "Pipeline ETL y modelado predictivo para Bizi Zaragoza"
+description = "Pipeline ETL, modelado predictivo y optimización de rutas para Bizi Zaragoza"
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26.0",
+    "pandas>=2.1.0",
+    "pyarrow>=14.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "osmnx>=1.9.0",
+    "networkx>=3.2.0",
+    "scipy>=1.11.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -7,6 +7,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .ipynb_checkpoints/
+cache/
 
 # ==============================================================================
 # 2. DATOS Y ARCHIVOS PARQUET (EXCEPTO ESTRUCTURA DE SNAPSHOT CONGELADO)

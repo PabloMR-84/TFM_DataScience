@@ -8,6 +8,17 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Added
+- **Sincronización independiente del histórico Parquet desde GitHub (`src/etl/io.py` y `scripts/main_BBDD.py`):** Nueva función `sync_historical_from_github()` con confirmación separada (`[s/N]`) respecto a la descarga de la API (`[U/r]`) y soporte para ejecución desatendida (`auto_confirm`, `force_download`, `sync_github`).
+- **Precomputación de red viaria urbana (`src/etl/config.py`, `src/etl/models_gold.py` y `pyproject.toml`):** Integración de grafo viario de Zaragoza mediante `osmnx` para generar `dim_station_distances.parquet` con distancias y tiempos reales entre estaciones.
+- **Documentación de cobertura y cierre de Entrega 02 (`docs/entregas/02_datos_y_preparacion.md` y `data/README.md`):** Incorporación de la auditoría temporal de capturas (`coverage_report`: `31/10/2026` – `21/11/2026`), diagnóstico de tramos operativos, criterios de selección de jornadas para demostración e instrucciones de acceso local sin clave de API.
+- **Motor experimental de optimización de rutas (`notebooks/rebalancing_routing_engine.ipynb`):** Primer prototipo del optimizador prescriptivo de rebalanceo para la flota real de Zaragoza.
+- **Histórico diario acumulado (`data/raw/historical/`):** Incorporación de las capturas automáticas `bizi_20261120.parquet` y `bizi_20261121.parquet`.
+
+### Changed
+- **Exportación de predicciones *out-of-sample* (`notebooks/modelado_predictivo.ipynb`):** Ajuste de rutas y exportación del artefacto puente de predicciones sobre *Test* para desacoplar la inferencia del motor de optimización de rutas.
+- **Refinamiento de limpieza y modelado Gold (`src/etl/cleaning.py` y `src/etl/models_gold.py`):** Ajustes menores de consistencia tras la cuarta revisión de la Capa Gold.
+
 ### Fixed
 - **Pipeline de extracción automática (`extract.py` y `.github/workflows/extract.yml`):** Incorporación de política de reintentos con *backoff* exponencial (`Retry`) ante microcortes de la API, actualización de la cabecera de autenticación (`x-api-key`), escritura atómica de ficheros Parquet y sincronización segura de `git push`.
 - **Rastreo de históricos en Git (`.gitignore`):** Adición de excepción explícita (`!data/raw/historical/*.parquet`) para permitir los *commits* automáticos del *collector* que quedaron bloqueados por la regla global `*.parquet` tras la versión `v0.3.1` (incidencia operativa registrada entre el `2026-11-19 21:50` y el `2026-11-20 17:00` CET).

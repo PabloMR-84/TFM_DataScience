@@ -1,9 +1,10 @@
 """
-src/config.py
---------------
+src/etl/config.py
+-----------------
 Módulo de configuración centralizada del proyecto SmartRebalance ZGZ.
-Define rutas base de directorios (data/raw, data/silver, data/gold), credenciales 
-de la API de Bizi Zaragoza y parámetros generales de ejecución.
+Define rutas base de directorios (data/raw, data/silver, data/gold), credenciales
+de la API de Bizi Zaragoza, parámetros de red viaria (OSMnx) y configuración
+general de ejecución.
 """
 
 import os
@@ -23,7 +24,7 @@ BASE_URL: str = "https://datosbizi.com/api"
 # ==============================================================================
 # 3. GESTIÓN DE RUTAS Y DIRECTORIOS (MEDALLION ARCHITECTURE)
 # ==============================================================================
-# config.py ubicado en TFM/src/config.py -> ROOT_DIR apunta a TFM/
+# config.py ubicado en TFM/src/etl/config.py -> ROOT_DIR apunta a TFM/
 ROOT_DIR: Path = Path(__file__).resolve().parents[2]  # Directorio raíz del proyecto (TFM/)
 
 # Rutas de almacenamiento de datos
@@ -77,3 +78,13 @@ ENDPOINTS_CONFIG = [
         "type": "stream",
     },
 ]
+
+# ==============================================================================
+# 5. PARÁMETROS DE RED VIARIA DE ZARAGOZA (CAPA GEOGRÁFICA / RUTAS)
+# ==============================================================================
+ROAD_NETWORK_PLACE: str = "Zaragoza, Spain"
+ROAD_NETWORK_TYPE: str = "drive"
+ROAD_NETWORK_RAW_FILENAME: str = "zaragoza_drive.graphml"
+# Factor corrector sobre velocidad máxima legal para reflejar circulación urbana real
+# (rotondas, semáforos, cedas y tráfico base en Zaragoza)
+URBAN_SPEED_FACTOR: float = 0.70
