@@ -551,12 +551,10 @@ def build_gold_dataset(
                 for col in exist_city:
                     df_gold[col] = np.nan
 
-    # 2. Cruce con Dim_Stations (m:1 estricto)
-    if not df_stations_gold.empty:
-        st_cols = ["station_id", "name", "latitude", "longitude", "capacity"]
-        exist_st = [c for c in st_cols if c in df_stations_gold.columns]
+    # 2. Cruce temporal con Dim_Stations solo para obtener 'capacity' (m:1 estricto)
+    if not df_stations_gold.empty and "capacity" in df_stations_gold.columns:
         df_gold = df_gold.merge(
-            df_stations_gold[exist_st],
+            df_stations_gold[["station_id", "capacity"]],
             on="station_id",
             how="left",
             validate="m:1",
