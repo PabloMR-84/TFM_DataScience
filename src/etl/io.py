@@ -1,9 +1,10 @@
 """
-src/io.py
-----------
+src/etl/io.py
+--------------
 Módulo de entrada y salida de datos (I/O).
 Gestiona la limpieza previa de carpetas de salida (Silver y Gold), la descarga e
-ingesta desde la API (Capa Bronze) con control interactivo en bloque, preserva
+ingesta desde la API (Capa Bronze) con control interactivo en bloque, la
+sincronización independiente del histórico Parquet desde GitHub, preserva
 metadatos temporales de raíz, reporta estaciones sin patrones en la API, carga
 parquets históricos y guarda capas Silver y Gold.
 """
@@ -13,11 +14,13 @@ from pathlib import Path
 from io import StringIO
 import json
 import shutil
+import subprocess
 import sys
 import pandas as pd
 import requests
 
 from etl.config import (
+    ROOT_DIR,
     HEADERS,
     BASE_URL,
     RAW_DIR,
@@ -37,26 +40,28 @@ RAW_FILES_MAP = {
 
 
 # ==============================================================================
-# 0. GESTIÓN DE LIMPIEZA Y DESCARGAS EN BLOQUE (I/O)
+# 0. GESTIÓN DE LIMPIEZA, DESCARGAS API Y SINCRONIZACIÓN GITHUB (I/O)
 # ==============================================================================
 
-def confirm_and_reset_output_dirs() -> None:
+def confirm_and_reset_output_dirs(auto_confirm: bool = False) -> None:
     """
     Solicita confirmación al usuario antes de iniciar el pipeline, advirtiendo
     que se eliminarán todos los archivos existentes en data/silver y data/gold
     para volver a generarlos desde cero. Si la respuesta es negativa, cierra el programa.
+    Si auto_confirm=True, omite la pregunta interactiva (útil para ejecución automatizada).
     Borra únicamente los archivos internos para evitar bloqueos de sincronización
     (WinError 5) en Windows o Google Drive.
     """
-    print(
-        "\n[AVISO] Al ejecutar este pipeline se ELIMINARÁN todos los archivos "
-        f"anteriores de '{SILVER_DIR}' y '{GOLD_DIR}' y se volverán a generar desde cero."
-    )
-    respuesta = input("¿Deseas continuar y ejecutar el código? [s/N]: ").strip().lower()
+    if not auto_confirm:
+        print(
+            "\n[AVISO] Al ejecutar este pipeline se ELIMINARÁN todos los archivos "
+            f"anteriores de '{SILVER_DIR}' y '{GOLD_DIR}' y se volverán a generar desde cero."
+        )
+        respuesta = input("¿Deseas continuar y ejecutar el código? [s/N]: ").strip().lower()
 
-    if respuesta not in ["s", "si", "sí", "y", "yes"]:
-        print("[CANCELADO] Ejecución cancelada por el usuario. No se ha modificado ningún archivo.")
-        sys.exit(0)
+        if respuesta not in ["s", "si", "sí", "y", "yes"]:
+            print("[CANCELADO] Ejecución cancelada por el usuario. No se ha modificado ningún archivo.")
+            sys.exit(0)
 
     archivos_borrados = 0
     for folder in [SILVER_DIR, GOLD_DIR]:
@@ -111,6 +116,54 @@ def resolve_download_mode(force_download: Optional[bool] = None) -> bool:
     else:
         print("[ACCIONAL] Opción seleccionada: Utilizando archivos locales existentes.")
         return False
+
+
+def sync_historical_from_github(
+    sync_github: Optional[bool] = None,
+    remote_branch: str = "origin/main",
+) -> None:
+    """
+    Pregunta de forma independiente al menú de la API si se desea descargar
+    el histórico más reciente de 'data/raw/historical/' desde GitHub sin alterar
+    ni mezclar el resto de archivos locales del repositorio.
+    - Si sync_github es True/False, ejecuta directamente sin preguntar.
+    - Si sync_github es None, solicita confirmación interactiva [s/N].
+    """
+    if sync_github is None:
+        respuesta = input(
+            "\n¿Deseas actualizar 'data/raw/historical/' desde GitHub antes de cargar el histórico? [s/N]: "
+        ).strip().lower()
+        should_sync = respuesta in ["s", "si", "sí", "y", "yes"]
+    else:
+        should_sync = sync_github
+
+    if not should_sync:
+        print("[INFO] Se utilizarán los archivos históricos locales existentes en data/raw/historical/.")
+        return
+
+    print(f"[ACCIONAL] Sincronizando 'data/raw/historical/' desde {remote_branch}...")
+    try:
+        subprocess.run(
+            ["git", "fetch", "origin"],
+            cwd=ROOT_DIR,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "checkout", remote_branch, "--", "data/raw/historical/"],
+            cwd=ROOT_DIR,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        print(" [OK] Histórico Parquet sincronizado correctamente desde GitHub.")
+    except subprocess.CalledProcessError as e:
+        err_msg = e.stderr.strip() if e.stderr else str(e)
+        print(
+            f"[AVISO] No se pudo sincronizar 'data/raw/historical/' desde GitHub ({err_msg}). "
+            "Se continuará con los archivos locales existentes."
+        )
 
 
 def _propagate_root_temporal_metadata(
@@ -362,7 +415,6 @@ def fetch_all_raw_data(
 def load_historical_parquets(custom_dir: Optional[Path] = None) -> pd.DataFrame:
     """
     Carga de archivos .parquet históricos locales.
-    NO se ve afectado por la comprobación interactiva de la API.
     """
     target_dir = custom_dir or HISTORICAL_RAW_DIR
     parquet_files = sorted(list(target_dir.glob("*.parquet")))

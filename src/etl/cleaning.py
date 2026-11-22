@@ -1,17 +1,30 @@
 """
-src/cleaning.py
-----------------
+src/etl/cleaning.py
+-------------------
 Módulo de limpieza, estandarización de esquemas y transformaciones (Capa Silver).
-Contiene funciones puras que reciben DataFrames en crudo (Bronze) y devuelven
-DataFrames estandarizados y tipados para la Capa Silver, aplicando validaciones
-de rango, conservando valores nulos reales y estandarizando todas las marcas
-temporales a la zona horaria Europe/Madrid.
+Contiene funciones puras que reciben DataFrames y objetos en crudo (Bronze) y
+devuelven DataFrames estandarizados y tipados para la Capa Silver, aplicando
+validaciones de rango, conservando valores nulos reales, estandarizando todas
+las marcas temporales a Europe/Madrid y vinculando las estaciones a la red viaria.
 """
 
+from typing import Any
 import numpy as np
+import osmnx as ox
 import pandas as pd
 
 from etl.utils import parse_dict_field, safe_local_timestamp
+
+
+def _get_largest_strongly_connected_graph(graph: Any) -> Any:
+    """
+    Extrae el mayor componente fuertemente conexo del grafo viario dirigido
+    (compatible tanto con OSMnx 2.x como con OSMnx 1.x), asegurando que exista
+    camino de ida y vuelta entre todos los nodos mapeados.
+    """
+    if hasattr(ox, "truncate") and hasattr(ox.truncate, "largest_component"):
+        return ox.truncate.largest_component(graph, strongly=True)
+    return ox.utils_graph.get_largest_component(graph, strongly=True)
 
 
 def clean_stations(df_raw: pd.DataFrame) -> pd.DataFrame:
@@ -352,3 +365,60 @@ def clean_historical_snapshots(df_raw: pd.DataFrame) -> pd.DataFrame:
 
     df.reset_index(drop=True, inplace=True)
     return df
+
+
+def clean_road_network_nodes(df_stations_silver: pd.DataFrame, road_graph: Any) -> pd.DataFrame:
+    """
+    Construye la tabla intermedia Silver (road_network_nodes_silver.parquet)
+    vinculando cada estación de Bizi con su nodo viario más cercano dentro del
+    mayor componente fuertemente conexo de la red viaria de Zaragoza.
+    """
+    if df_stations_silver.empty or road_graph is None:
+        return pd.DataFrame()
+
+    required_cols = ["station_id", "latitude", "longitude"]
+    if not set(required_cols).issubset(df_stations_silver.columns):
+        raise ValueError(f"df_stations_silver debe contener las columnas {required_cols}")
+
+    base_cols = ["station_id", "name", "latitude", "longitude"]
+    existing_cols = [c for c in base_cols if c in df_stations_silver.columns]
+
+    df_nodes = (
+        df_stations_silver[existing_cols]
+        .dropna(subset=["station_id", "latitude", "longitude"])
+        .drop_duplicates(subset=["station_id"], keep="last")
+        .sort_values("station_id")
+        .reset_index(drop=True)
+    )
+    df_nodes["station_id"] = df_nodes["station_id"].astype("Int64")
+
+    # Filtrar al mayor componente fuertemente conexo para evitar nodos aislados sin salida
+    strong_graph = _get_largest_strongly_connected_graph(road_graph)
+
+    # Búsqueda del nodo viario más cercano (X = longitud, Y = latitud)
+    nearest_node_ids, snap_dists_deg = ox.distance.nearest_nodes(
+        strong_graph,
+        X=df_nodes["longitude"].to_numpy(),
+        Y=df_nodes["latitude"].to_numpy(),
+        return_dist=True,
+    )
+
+    df_nodes["osm_node_id"] = pd.Series(nearest_node_ids, index=df_nodes.index, dtype="int64")
+    df_nodes["node_latitude"] = [
+        float(strong_graph.nodes[nid]["y"]) for nid in df_nodes["osm_node_id"]
+    ]
+    df_nodes["node_longitude"] = [
+        float(strong_graph.nodes[nid]["x"]) for nid in df_nodes["osm_node_id"]
+    ]
+
+    # Distancia aproximada en metros entre el tótem de la estación y la calzada asignada
+    lat_rad = np.radians(df_nodes["latitude"].to_numpy())
+    dlat_m = (df_nodes["node_latitude"].to_numpy() - df_nodes["latitude"].to_numpy()) * 111_320.0
+    dlon_m = (
+        (df_nodes["node_longitude"].to_numpy() - df_nodes["longitude"].to_numpy())
+        * 111_320.0
+        * np.cos(lat_rad)
+    )
+    df_nodes["snap_distance_m"] = np.hypot(dlat_m, dlon_m).round(2)
+
+    return df_nodes

@@ -1,6 +1,6 @@
 """
-src/models_gold.py
--------------------
+src/etl/models_gold.py
+----------------------
 Módulo de modelado dimensional (Capa Gold) y construcción del dataset analítico.
 
 ==============================================================================
@@ -32,14 +32,19 @@ ESPECIFICACIÓN DEL OBJETIVO PREDICTIVO, HORIZONTE Y MATRIZ DE VARIABLES
    - Perfiles Basales (Dim_Patterns, disponible <= t): occupancy_avg, bikes_avg.
    - Indicadores Operativos (Rankings, disponible <= t): turnover_score,
      empty_hours, full_hours, problem_hours (sin fallbacks ni relleno con ceros).
+   - Topología Viaria (Dim_StationDistances): origin_id, destination_id,
+     distance_m, duration_sec, network_source.
 ==============================================================================
 """
 
-from typing import List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
+import networkx as nx
 import numpy as np
+import osmnx as ox
 import pandas as pd
 import requests
 
+from etl.config import URBAN_SPEED_FACTOR
 from etl.utils import safe_local_timestamp
 
 
@@ -119,6 +124,126 @@ def build_dim_patterns(df_patterns_silver: pd.DataFrame) -> pd.DataFrame:
         subset=["station_id", "day_type", "hour", "available_at"], keep="last"
     ).reset_index(drop=True)
     return df_dim
+
+
+def build_dim_station_distances(
+    df_road_nodes_silver: pd.DataFrame,
+    road_graph: Any,
+    speed_factor: float = URBAN_SPEED_FACTOR,
+) -> pd.DataFrame:
+    """
+    Construye la dimensión topológica Origen-Destino (Dim_StationDistances) con
+    las distancias reales por carretera (metros) y tiempos estimados de conducción
+    (segundos) entre todos los pares (origin_id, destination_id) de estaciones.
+    """
+    if df_road_nodes_silver.empty or road_graph is None:
+        return pd.DataFrame()
+
+    if speed_factor <= 0 or speed_factor > 1.5:
+        raise ValueError(f"speed_factor debe estar en (0, 1.5], recibido: {speed_factor}")
+
+    # 1. Extraer mayor componente fuertemente conexo (compatible OSMnx 1.x y 2.x)
+    if hasattr(ox, "truncate") and hasattr(ox.truncate, "largest_component"):
+        strong_graph = ox.truncate.largest_component(road_graph, strongly=True).copy()
+    else:
+        strong_graph = ox.utils_graph.get_largest_component(road_graph, strongly=True).copy()
+
+    # 2. Imputar velocidades por tipo de vía y calcular tiempos base por arista
+    if hasattr(ox, "routing") and hasattr(ox.routing, "add_edge_speeds"):
+        strong_graph = ox.routing.add_edge_speeds(strong_graph)
+        strong_graph = ox.routing.add_edge_travel_times(strong_graph)
+    else:
+        strong_graph = ox.speed.add_edge_speeds(strong_graph)
+        strong_graph = ox.speed.add_edge_travel_times(strong_graph)
+
+    # 3. Construir DiGraph simple conservando el tramo más rápido entre cada par (u, v)
+    #    y aplicando el factor de velocidad urbana real (URBAN_SPEED_FACTOR)
+    fast_digraph = nx.DiGraph()
+    for u, v, data in strong_graph.edges(data=True):
+        raw_time = float(data.get("travel_time", 0.0))
+        length_m = float(data.get("length", 0.0))
+        adj_time = raw_time / speed_factor
+
+        if fast_digraph.has_edge(u, v):
+            if adj_time < fast_digraph[u][v]["travel_time"]:
+                fast_digraph[u][v]["travel_time"] = adj_time
+                fast_digraph[u][v]["length"] = length_m
+        else:
+            fast_digraph.add_edge(u, v, travel_time=adj_time, length=length_m)
+
+    # 4. Dijkstra desde cada nodo viario único asociado a estaciones
+    stations_df = (
+        df_road_nodes_silver[["station_id", "osm_node_id"]]
+        .dropna()
+        .sort_values("station_id")
+        .reset_index(drop=True)
+    )
+    station_ids = stations_df["station_id"].astype(int).tolist()
+    node_ids = stations_df["osm_node_id"].astype(int).tolist()
+    unique_nodes = sorted(set(node_ids))
+
+    pair_metrics: Dict[Tuple[int, int], Tuple[float, float]] = {}
+
+    for src_node in unique_nodes:
+        dists_sec, paths = nx.single_source_dijkstra(
+            fast_digraph, source=src_node, weight="travel_time"
+        )
+        for dst_node in unique_nodes:
+            if src_node == dst_node:
+                pair_metrics[(src_node, dst_node)] = (0.0, 0.0)
+                continue
+
+            if dst_node not in dists_sec:
+                raise RuntimeError(
+                    f"No existe ruta dirigida entre los nodos viarios {src_node} -> {dst_node}."
+                )
+
+            path_nodes = paths[dst_node]
+            total_dist_m = sum(
+                fast_digraph[path_nodes[k]][path_nodes[k + 1]]["length"]
+                for k in range(len(path_nodes) - 1)
+            )
+            pair_metrics[(src_node, dst_node)] = (
+                round(float(total_dist_m), 2),
+                round(float(dists_sec[dst_node]), 2),
+            )
+
+    # 5. Expandir a los N x N pares de estaciones (276 x 276 = 76.176 filas)
+    records = []
+    for orig_st, orig_node in zip(station_ids, node_ids):
+        for dest_st, dest_node in zip(station_ids, node_ids):
+            if orig_st == dest_st:
+                dist_m, dur_sec = 0.0, 0.0
+            else:
+                dist_m, dur_sec = pair_metrics[(orig_node, dest_node)]
+            records.append((orig_st, dest_st, dist_m, dur_sec, "osmnx_drive"))
+
+    df_distances = pd.DataFrame(
+        records,
+        columns=["origin_id", "destination_id", "distance_m", "duration_sec", "network_source"],
+    )
+    df_distances["origin_id"] = df_distances["origin_id"].astype("Int64")
+    df_distances["destination_id"] = df_distances["destination_id"].astype("Int64")
+    df_distances["distance_m"] = df_distances["distance_m"].astype("float64")
+    df_distances["duration_sec"] = df_distances["duration_sec"].astype("float64")
+    df_distances["network_source"] = df_distances["network_source"].astype("string")
+
+    # 6. Validación estricta de integridad de la matriz OD
+    expected_rows = len(station_ids) * len(station_ids)
+    if len(df_distances) != expected_rows:
+        raise ValueError(
+            f"Matriz OD incompleta: esperadas {expected_rows:,} filas, obtenidas {len(df_distances):,}."
+        )
+    if df_distances[["distance_m", "duration_sec"]].isna().any().any():
+        raise ValueError("Se detectaron valores nulos en distance_m o duration_sec.")
+    if (df_distances["distance_m"] < 0).any() or (df_distances["duration_sec"] < 0).any():
+        raise ValueError("Se detectaron distancias o tiempos negativos en dim_station_distances.")
+
+    print(
+        f" [OK] Matriz OD viaria generada: {len(df_distances):,} pares "
+        f"({len(station_ids)} x {len(station_ids)} estaciones, factor velocidad={speed_factor})."
+    )
+    return df_distances
 
 
 def fetch_public_holidays(years: List[int]) -> Set[str]:
@@ -426,12 +551,10 @@ def build_gold_dataset(
                 for col in exist_city:
                     df_gold[col] = np.nan
 
-    # 2. Cruce con Dim_Stations (m:1 estricto)
-    if not df_stations_gold.empty:
-        st_cols = ["station_id", "name", "latitude", "longitude", "capacity"]
-        exist_st = [c for c in st_cols if c in df_stations_gold.columns]
+    # 2. Cruce temporal con Dim_Stations solo para obtener 'capacity' (m:1 estricto)
+    if not df_stations_gold.empty and "capacity" in df_stations_gold.columns:
         df_gold = df_gold.merge(
-            df_stations_gold[exist_st],
+            df_stations_gold[["station_id", "capacity"]],
             on="station_id",
             how="left",
             validate="m:1",

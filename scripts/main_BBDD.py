@@ -1,17 +1,21 @@
 """
-main_BBDD.py
-------------
+scripts/main_BBDD.py
+--------------------
 Orquestador principal del pipeline ETL / Arquitectura Medallón (SmartRebalance ZGZ).
-Ejecuta la confirmación de regeneración limpia de Silver y Gold, la ingesta en Bronze,
-las transformaciones y validaciones de rango en Silver, el modelado dimensional
-unificado en Gold (con diagnóstico explícito de Cold Start y prevención estricta de
-fuga temporal en rankings, patrones y contexto diario) y los controles de
-cardinalidad y cobertura operativa de capturas.
+Ejecuta la confirmación de regeneración limpia de Silver y Gold, la ingesta en Bronze
+(con control independiente para caché local de la API [U/r] y actualización del
+histórico desde GitHub [s/N]), las transformaciones y validaciones de rango en Silver,
+el modelado dimensional unificado en Gold (con diagnóstico explícito de Cold Start y
+prevención estricta de fuga temporal en rankings, patrones y contexto diario) y los
+controles de cardinalidad y cobertura operativa de capturas.
 """
+
+from typing import Optional
 
 from etl.io import (
     confirm_and_reset_output_dirs,
     fetch_all_raw_data,
+    sync_historical_from_github,
     load_historical_parquets,
     save_silver_df,
     save_gold_df,
@@ -37,7 +41,12 @@ from etl.utils import (
 )
 
 
-def main():
+def main(
+    auto_confirm: bool = False,
+    force_download: Optional[bool] = None,
+    sync_github: Optional[bool] = None,
+    remote_branch: str = "origin/main",
+) -> None:
     print("=" * 70)
     print("INICIANDO PIPELINE MODULAR SMARTREBALANCE ZGZ (BRONZE - SILVER - GOLD)")
     print("=" * 70)
@@ -45,13 +54,14 @@ def main():
     # ==========================================================================
     # 0. CONFIRMACIÓN Y LIMPIEZA DE ARCHIVOS PREVIOS (SILVER Y GOLD)
     # ==========================================================================
-    confirm_and_reset_output_dirs()
+    confirm_and_reset_output_dirs(auto_confirm=auto_confirm)
 
     # ==========================================================================
-    # 1. INGESTA CAPA BRONZE
+    # 1. INGESTA CAPA BRONZE (API + HISTÓRICO PARQUET GITHUB)
     # ==========================================================================
     print("\n--- 1. Ingesta Capa Bronze ---")
-    raw_data = fetch_all_raw_data()
+    raw_data = fetch_all_raw_data(force_download=force_download)
+    sync_historical_from_github(sync_github=sync_github, remote_branch=remote_branch)
     df_historical_raw = load_historical_parquets()
     print(f" [OK] Histórico Parquet cargado ({len(df_historical_raw):,} registros).")
 
