@@ -10,24 +10,32 @@ __pycache__/
 cache/
 
 # ==============================================================================
-# 2. DATOS Y ARCHIVOS PARQUET (EXCEPTO ESTRUCTURA DE SNAPSHOT CONGELADO)
+# 2. DATOS Y ARCHIVOS PARQUET (EXCEPTO HISTÓRICO Y SNAPSHOTS CONGELADOS)
 # ==============================================================================
 # Ignoramos todos los ficheros de datos pesados y capas vivas
 *.parquet
 *.csv
 data/silver/
 data/gold/
+data/predictions/
 
+# Protegemos el histórico diario versionado por GitHub Actions
 data/raw/*
 !data/raw/historical/
 !data/raw/historical/*.parquet
 
-# Permitimos subir la carpeta vacía del snapshot de ML y su archivo marcador
-!data/gold_snapshot_ml_20261115/
-!data/gold_snapshot_ml_20261115/.gitkeep
+# Permitimos subir las carpetas vacías de los snapshots de ML y su .gitkeep
+!data/gold_snapshot_ml_20261122/
+!data/gold_snapshot_ml_20261122/.gitkeep
 
 # ==============================================================================
-# 3. DOCUMENTACIÓN COMPILADA Y ARCHIVOS AUXILIARES DEL PROYECTO
+# 3. ARTEFACTOS DE MODELOS (SE VERSIONA metadata.json, NO LOS BINARIOS)
+# ==============================================================================
+*.joblib
+*.pkl
+
+# ==============================================================================
+# 4. DOCUMENTACIÓN COMPILADA Y ARCHIVOS AUXILIARES DEL PROYECTO
 # ==============================================================================
 *.pdf
 material/
@@ -35,7 +43,7 @@ data_EDA/
 notebooks/BBDD/
 
 # ==============================================================================
-# 4. ARCHIVOS DEL SISTEMA OPERATIVO / GOOGLE DRIVE DESKTOP
+# 5. ARCHIVOS DEL SISTEMA OPERATIVO / GOOGLE DRIVE DESKTOP
 # ==============================================================================
 desktop.ini
 Thumbs.db

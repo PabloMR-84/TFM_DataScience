@@ -8,20 +8,29 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-22
+
 ### Added
+- **Pipeline de modelado predictivo en producción (`src/modeling/`):** Implementación modular y desacoplada de ingeniería de características (`features.py`), entrenamiento multi-horizonte LightGBM con hiperparámetros optimizados (`train.py`) e inferencia *batch* (`predict.py`), con trazabilidad de datos mediante huella **SHA-256** registrada en `models/lgbm_v1/metadata.json`.
+- **Orquestadores y *entry points* CLI (`scripts/train_model.py`, `scripts/predict.py`, `pyproject.toml`):** Scripts ejecutables desacoplados para entrenamiento e inferencia y comandos CLI registrados (`smartrebalance-train`, `smartrebalance-predict`).
+- **Documentación modular y *Model Card* (`README.md`, `data/README.md`, `notebooks/README.md`, `models/README.md`, `scripts/README.md`, `src/README.md`):** Guía general simplificada en la raíz y documentación técnica detallada por carpeta, incluyendo la *Model Card* del modelo campeón.
+- **Instantánea congelada extendida (`data/gold_snapshot_ml_20261122/`):** Nueva instantánea de 23 días (`31/10/2026` – `22/11/2026`, `782.736` registros reales) rastreada mediante `.gitkeep` para aislar la reproducibilidad de `notebooks/` frente a `data/gold/`.
 - **Sincronización independiente del histórico Parquet desde GitHub (`src/etl/io.py` y `scripts/main_BBDD.py`):** Nueva función `sync_historical_from_github()` con confirmación separada (`[s/N]`) respecto a la descarga de la API (`[U/r]`) y soporte para ejecución desatendida (`auto_confirm`, `force_download`, `sync_github`).
 - **Precomputación de red viaria urbana (`src/etl/config.py`, `src/etl/models_gold.py` y `pyproject.toml`):** Integración de grafo viario de Zaragoza mediante `osmnx` para generar `dim_station_distances.parquet` con distancias y tiempos reales entre estaciones.
-- **Documentación de cobertura y cierre de Entrega 02 (`docs/entregas/02_datos_y_preparacion.md` y `data/README.md`):** Incorporación de la auditoría temporal de capturas (`coverage_report`: `31/10/2026` – `21/11/2026`), diagnóstico de tramos operativos, criterios de selección de jornadas para demostración e instrucciones de acceso local sin clave de API.
-- **Motor experimental de optimización de rutas (`notebooks/rebalancing_routing_engine.ipynb`):** Primer prototipo del optimizador prescriptivo de rebalanceo para la flota real de Zaragoza.
-- **Histórico diario acumulado (`data/raw/historical/`):** Incorporación de las capturas automáticas `bizi_20261120.parquet` y `bizi_20261121.parquet`.
+- **Documentación de cobertura y cierre de Entrega 02 (`docs/entregas/02_datos_y_preparacion.md` y `data/README.md`):** Incorporación de la auditoría temporal de capturas (`coverage_report`), diagnóstico de tramos operativos, criterios de selección de jornadas e instrucciones de acceso local sin clave de API.
 
 ### Changed
-- **Exportación de predicciones *out-of-sample* (`notebooks/modelado_predictivo.ipynb`):** Ajuste de rutas y exportación del artefacto puente de predicciones sobre *Test* para desacoplar la inferencia del motor de optimización de rutas.
+- **Reevaluación experimental con 23 días (`notebooks/modelado_predictivo.ipynb`):** Reentrenamiento sobre `gold_snapshot_ml_20261122`, promoción de **LightGBM (Optuna)** como modelo campeón (`Test MAE = 0,0938 / 0,1190 / 0,1318`), incorporación de la decisión práctica de producto (`+1h` vs. `+2h/+3h`) y caso de estudio visual de estación saturada (`10.4`).
+- **Empaquetado y control de versiones (`pyproject.toml`, `requirements.txt`, `.gitignore`):** Adición de dependencias de producción (`scikit-learn`, `lightgbm`, `joblib`), grupo opcional `[notebooks]` y exclusión de binarios de modelos (`*.joblib`, `*.pkl`) y `data/predictions/`, manteniendo versionado `metadata.json`.
+- **Aligeramiento del esquema de `df_gold.parquet` (`src/etl/models_gold.py`):** Eliminación de atributos estáticos redundantes de estación (`name`, `latitude`, `longitude` y `capacity` tras calcular `occupancy_pct`), reduciendo el dataset analítico de 25 a 22 columnas.
 - **Refinamiento de limpieza y modelado Gold (`src/etl/cleaning.py` y `src/etl/models_gold.py`):** Ajustes menores de consistencia tras la cuarta revisión de la Capa Gold.
 
+### Removed
+- **Instantánea obsoleta (`data/gold_snapshot_ml_20261115/.gitkeep`):** Retirada tras su sustitución por el *snapshot* consolidado de 23 días (`gold_snapshot_ml_20261122/`).
+
 ### Fixed
-- **Pipeline de extracción automática (`extract.py` y `.github/workflows/extract.yml`):** Incorporación de política de reintentos con *backoff* exponencial (`Retry`) ante microcortes de la API, actualización de la cabecera de autenticación (`x-api-key`), escritura atómica de ficheros Parquet y sincronización segura de `git push`.
-- **Rastreo de históricos en Git (`.gitignore`):** Adición de excepción explícita (`!data/raw/historical/*.parquet`) para permitir los *commits* automáticos del *collector* que quedaron bloqueados por la regla global `*.parquet` tras la versión `v0.3.1` (incidencia operativa registrada entre el `2026-11-19 21:50` y el `2026-11-20 17:00` CET).
+- **Pipeline de extracción automática (`extract.py` y `.github/workflows/extract.yml`):** Incorporación de política de reintentos con *backoff* exponencial (`Retry`), actualización de cabecera `x-api-key`, escritura atómica de ficheros Parquet y sincronización segura de `git push`.
+- **Rastreo de históricos en Git (`.gitignore`):** Adición de excepción explícita (`!data/raw/historical/*.parquet`) para permitir los *commits* automáticos del *collector* tras `v0.3.1`.
 
 
 ## [0.3.1] - 2026-11-19

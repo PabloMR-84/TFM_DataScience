@@ -1,52 +1,35 @@
 # TFM_DataScience — SmartRebalance ZGZ
 
+**SmartRebalance ZGZ** es un sistema analítico y predictivo para la gestión proactiva de la red de bicicletas públicas **Bizi Zaragoza** (276 estaciones). El proyecto integra un pipeline de datos con arquitectura Medallón (*Bronze → Silver → Gold*), modelos de Machine Learning multi-horizonte (`+1h`, `+2h` y `+3h`) con trazabilidad SHA-256 para anticipar vaciados y saturaciones, y la preparación de entradas para la futura optimización logística de la flota de rebalanceo (6 furgonetas de 22 plazas en operación 24 horas).
+
+---
+
 ## Estructura del Proyecto
+
+El repositorio sigue una arquitectura modular estándar (*src-layout*) que separa la ingesta, la lógica empaquetada, los scripts ejecutables, los artefactos entrenados y la experimentación. Cada carpeta principal incluye (o incluirá) su propio `README.md` con el detalle técnico de su contenido:
 
 ```text
 TFM/
-├── .github/
-│   └── workflows/
-│       └── extract.yml             # Automatización de captura periódica cada 10 min (GitHub Actions)
-│
-├── assets/                         # Imágenes, capturas y recursos visuales para la documentación (README)
-│
-├── data/
-│   ├── raw/                        # Archivos en bruto descargados de la API de DatosBizi
-│   ├── silver/                     # DataFrames estandarizados y limpios (csv/parquet)
-│   ├── gold/                       # Tablas dimensionales, hechos y df_gold final (parquet)
-│   └── gold_snapshot_ml_20261115/  # Snapshot congelado de datos para reproducibilidad en notebooks/
-│
-├── docs/                           # Documentación técnica y entregables del proyecto
-│
-├── notebooks/                      # Cuadernos de modelado predictivo, evaluación y explicabilidad SHAP
-│   ├── modelo_predictivo.ipynb     # Cuaderno principal de experimentación y validación ML (+1h, +2h, +3h)
-│   └── README.md                   # Instrucciones de descarga del snapshot de datos desde Drive
-│
-├── scripts/                        # Scripts ejecutables y orquestadores de pipelines
-│   └── main_BBDD.py                # Script principal del pipeline ETL (Bronze -> Silver -> Gold)
-│
-├── src/                            # Código fuente empaquetado del proyecto
-│   ├── __init__.py                 # Inicializador del paquete principal
-│   ├── etl/                        # Módulo de ingeniería de datos y construcción de Capa Gold
-│   │   ├── __init__.py             # Exportaciones públicas del subpaquete etl
-│   │   ├── config.py               # Configuración central (endpoints, variables de entorno, ROOT_DIR)
-│   │   ├── utils.py                # Herramientas de soporte (parseo de JSON, tipos, timestamps)
-│   │   ├── io.py                   # Orquestador I/O (descarga interactiva o caché, persistencia)
-│   │   ├── cleaning.py             # Estandarización pura de esquemas (Capa Silver)
-│   │   └── models_gold.py          # Modelo dimensional, API de festivos y extrapolación Cold Start
-│   └── modeling/                   # Módulo de Machine Learning (en desarrollo)
-│       └── __init__.py             # Inicializador del subpaquete modeling
-│
-├── .env                            # Variables de entorno seguras (BIZI_API_KEY)
-├── .gitignore                      # Exclusiones de control de versiones (datos, entornos, temporales)
-├── CHANGELOG.md                    # Registro cronológico de versiones y cambios del proyecto
-├── CONTRIBUTING.md                 # Guía y convenciones de contribución al repositorio
-├── extract.py                      # Script ligero de captura periódica automatizada (GitHub Actions)
-├── LICENSE                         # Licencia del repositorio
-├── pyproject.toml                  # Configuración de empaquetado y metadatos del proyecto
-├── README.md                       # Documentación general, instalación y configuración
-└── requirements.txt                # Dependencias y librerías necesarias para ejecutar el proyecto
+├── .github/workflows/    # Automatización de captura periódica cada 10 min (GitHub Actions)
+├── assets/               # Imágenes y recursos visuales para la documentación
+├── data/                 # Capas Medallón (raw, silver, gold), predicciones y snapshots congelados
+├── docs/                 # Documentación técnica y memoria de entregas del TFM
+├── models/               # Modelos entrenados (locales) y metadatos versionados (metadata.json + SHA-256)
+├── notebooks/            # Cuadernos de experimentación, evaluación y explicabilidad SHAP
+├── scripts/              # Orquestadores ejecutables (ETL, entrenamiento e inferencia batch)
+├── src/                  # Código fuente empaquetado del proyecto (etl/ y modeling/)
+├── .env                  # Variables de entorno locales (BIZI_API_KEY, ignorado en Git)
+├── .gitignore            # Exclusiones de control de versiones (binarios, datos vivos, caché)
+├── CHANGELOG.md          # Registro cronológico de versiones y cambios
+├── CONTRIBUTING.md       # Guía y convenciones de contribución al repositorio
+├── extract.py            # Script ligero de captura automatizada (GitHub Actions)
+├── LICENSE               # Licencia del repositorio
+├── pyproject.toml        # Empaquetado, dependencias y entry points CLI
+├── README.md             # Documentación general, instalación y puesta en marcha
+└── requirements.txt      # Listado de dependencias del entorno
 ```
+
+> **Documentación detallada por módulo:** Consulta los `README.md` específicos dentro de `data/`, `notebooks/`, `scripts/`, `src/` y `models/` para ver esquemas de datos, contratos de entrada/salida y detalles de implementación.
 
 ---
 
@@ -59,7 +42,7 @@ TFM/
 
 ### 2. Creación del entorno virtual e instalación de dependencias
 
-Desde la raíz del proyecto (`TFM/`), crea y activa un entorno virtual, instala las dependencias definidas en `requirements.txt` y registra el proyecto en **modo editable** (`-e .`) para que Python reconozca los paquetes internos (`etl` y `modeling`) desde cualquier script o cuaderno:
+Desde la raíz del proyecto (`TFM/`), crea y activa un entorno virtual e instala el proyecto en **modo editable** (`-e .`) para registrar los paquetes internos (`etl` y `modeling`) y los comandos CLI definidos en `pyproject.toml`:
 
 ```bash
 # 1. Crear el entorno virtual
@@ -73,11 +56,43 @@ source .venv/Scripts/activate
 # En Linux / macOS:
 # source .venv/bin/activate
 
-# 3. Instalar las dependencias del proyecto
-pip install -r requirements.txt
-
-# 4. Instalar el paquete local en modo editable
+# 3. Instalar el paquete local y sus dependencias de producción en modo editable
 pip install -e .
+
+# (Opcional) Instalar dependencias adicionales para ejecutar los notebooks (Optuna, SHAP, XGBoost, gráficos)
+pip install -e ".[notebooks]"
+```
+
+*(Como alternativa, también puedes instalar el entorno completo mediante `pip install -r requirements.txt` seguido de `pip install -e .`).*
+
+---
+
+## Ejecución Rápida (Pipelines)
+
+Los flujos de datos, entrenamiento e inferencia están desacoplados y se ejecutan desde la raíz del proyecto (`TFM/`):
+
+### 1. Pipeline ETL (*Bronze → Silver → Gold*)
+Regenera las capas `data/silver/` y `data/gold/` a partir del histórico local y la API de DatosBizi:
+```bash
+python scripts/main_BBDD.py
+```
+
+### 2. Entrenamiento del Modelo Predictivo (LightGBM `+1h`, `+2h`, `+3h`)
+Lee `data/gold/`, calcula el hash **SHA-256** de los datos de entrada, entrena los modelos multi-horizonte y guarda los artefactos y `metadata.json` en `models/lgbm_v1/`:
+```bash
+python scripts/train_model.py
+# o mediante el entry point CLI:
+smartrebalance-train
+```
+
+### 3. Inferencia Batch (Predicciones)
+Carga los modelos serializados sin reentrenar y exporta las predicciones a `data/predictions/predictions_lgbm.parquet`:
+```bash
+# Ventana reciente por defecto (últimas 72 horas)
+python scripts/predict.py
+
+# Solo el instante más reciente capturado (modo tiempo real)
+smartrebalance-predict --latest-only
 ```
 
 ---

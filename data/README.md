@@ -1,8 +1,8 @@
 # 📂 Arquitectura y Gestión de Datos (`data/`)
 
-Este directorio almacena todas las capas de datos del proyecto **SmartRebalance ZGZ**, organizadas siguiendo una **Arquitectura Medallón** (`raw` $\rightarrow$ `silver` $\rightarrow$ `gold`) diseñada para garantizar la trazabilidad, la calidad física de las observaciones y la ausencia de fuga de información temporal (*anti-data leakage*).
+Este directorio almacena todas las capas de datos del proyecto **SmartRebalance ZGZ**, organizadas siguiendo una **Arquitectura Medallón** (`raw` $\rightarrow$ `silver` $\rightarrow$ `gold`), junto con las salidas de inferencia en producción (`predictions/`) y la instantánea congelada para experimentación (`gold_snapshot_ml_20261122/`).
 
-> **Nota sobre credenciales:** El procedimiento para obtener y configurar la variable de entorno `BIZI_API_KEY` se encuentra detallado en el [`README.md` principal](../README.md) del repositorio. No obstante, el pipeline ETL permite ejecutarse en **modo 100 % offline** reutilizando los ficheros cacheados en `data/raw/`.
+> **Nota sobre credenciales:** El procedimiento para obtener y configurar la variable de entorno `BIZI_API_KEY` se encuentra detallado en el [`README.md` principal](../README.md). No obstante, el pipeline ETL permite ejecutarse en **modo 100 % offline** reutilizando los ficheros cacheados en `data/raw/`.
 
 ---
 
@@ -11,7 +11,7 @@ Este directorio almacena todas las capas de datos del proyecto **SmartRebalance 
 Los datos del sistema de bicicletas públicas de Zaragoza provienen de dos fuentes abiertas principales:
 
 1. **API de DatosBizi Zaragoza (`https://datosbizi.com/api`):**
-   * **Fuente primaria:** Feed oficial **GBFS v2** del servicio Bizi Zaragoza (`https://zaragoza.publicbikesystem.net/customer/gbfs/v2/gbfs.json`), agregado y enriquecido mediante endpoints históricos y analíticos.
+   * **Fuente primaria:** Feed oficial **GBFS v2** del servicio Bizi Zaragoza (`https://zaragoza.publicbikesystem.net/customer/gbfs/v2/gbfs.json`), agregado y enriquecido mediante *endpoints* históricos y analíticos.
    * **Cobertura:** Las **276 estaciones** activas de la red urbana de Zaragoza.
    * **Endpoints consumidos en la ingesta:**
      * `/api/stations`: Estado instantáneo y metadatos geográficos/capacidad de las estaciones.
@@ -28,38 +28,18 @@ Los datos del sistema de bicicletas públicas de Zaragoza provienen de dos fuent
 
 ```text
 data/
-├── raw/                              # Capa Bronze: Datos en crudo tal como llegan de la fuente
-│   ├── historical/                   # [Versionado en Git] Capturas automáticas cada 10 min
-│   │   └── bizi_YYYYMMDD.parquet     # Histórico particionado por día natural (UTC)
-│   ├── stations_raw.json             # Maestro de estaciones (caché API)
-│   ├── rebalancing_raw.json          # Recomendaciones de rebalanceo (caché API)
-│   ├── rankings_raw.json             # Rankings de rotación y fricción (caché API)
-│   ├── patterns_raw.json             # Perfiles basales horarios (caché API)
-│   └── bizi_history_raw.csv          # Serie macro diaria de ciudad (caché API)
-│
-├── silver/                           # Capa Silver: Datos limpios, tipados y validados (regenerable)
-│   ├── stations_silver.csv
-│   ├── rebalancing_silver.csv
-│   ├── rankings_silver.csv
-│   ├── patterns_silver.csv
-│   ├── bizi_history_silver.csv
-│   └── historical_snapshots_silver.parquet
-│
-├── gold/                             # Capa Gold: Modelo Estrella y tabla maestra ML (regenerable)
-│   ├── dim_stations.parquet          # Dimensión maestra de estaciones (276 filas)
-│   ├── dim_calendar.parquet          # Dimensión temporal, festivos y métricas macro diarias
-│   ├── dim_patterns.parquet          # Dimensión de perfiles basales horarios con available_at
-│   ├── fact_station_snapshots.parquet# Tabla de hechos granular (cada 10 minutos)
-│   ├── coverage_report.parquet       # Auditoría de completitud del scheduler (también en .csv)
-│   └── df_gold.parquet               # Tabla maestra consolidada (One Big Table) para ML
-│
-└── gold_snapshot_ml_20261115/        # Instantánea congelada para reproducibilidad de notebooks
-    └── .gitkeep                      # (Ver notebooks/README.md para enlace de descarga)
+├── raw/                        # Capa Bronze: datos en crudo y caché local de la API
+│   └── historical/             # [Versionado en Git] Capturas automáticas cada 10 min (Parquet diario)
+├── silver/                     # Capa Silver: datos limpios, tipados y validados (regenerable)
+├── gold/                       # Capa Gold: modelo en estrella y tabla maestra de producción (regenerable)
+├── predictions/                # Salida de inferencia batch generada por scripts/predict.py (regenerable)
+├── gold_snapshot_ml_20261122/  # Instantánea congelada exclusiva para reproducibilidad en notebooks/
+└── README.md                   # Documentación de la arquitectura de datos
 ```
 
 ---
 
-## 🥉 3. Detalle de las Capas del Flujo Medallón
+## 🥉 3. Detalle de las Capas y Directorios
 
 ### Capa Bronze / Raw (`data/raw/`)
 Almacena las respuestas originales de la API sin alterar su estructura ni imputar valores, preservando los metadatos temporales de raíz (`generatedAt`, `windowStart`, `windowEnd`) para garantizar la trazabilidad.
@@ -73,24 +53,37 @@ Generada automáticamente por el módulo `src/etl/cleaning.py`. Aplica reglas de
 * Estandarización de nombres de columnas a `snake_case`.
 * Homogeneización estricta de todas las marcas temporales a la zona horaria local **`Europe/Madrid`**.
 * Preservación de valores ausentes reales mediante tipos anulables de Pandas (`Int64`), evitando distorsionar promedios con ceros artificiales.
-* Validación de integridad física ($capacity > 0$, $0 \le \text{bicicletas / anclajes} \le capacity$, ocupación $\in [0.0, 1.0]$) y deduplicación por `(station_id, timestamp)`.
+* Validación de integridad física ($\text{capacity} > 0$, $0 \le \text{bicicletas / anclajes} \le \text{capacity}$, ocupación $\in [0.0, 1.0]$) y deduplicación por `(station_id, timestamp)`.
 
 ### Capa Gold (`data/gold/`)
-Generada automáticamente por `src/etl/models_gold.py` en formato Parquet optimizado para analítica y Machine Learning:
-* **Modelo Dimensional en Estrella:** Separa entidades descriptivas (`dim_stations`, `dim_calendar`, `dim_patterns`) de los eventos granulares (`fact_station_snapshots`).
-* **Tabla Maestra Consolidada (`df_gold.parquet`):** Dataset unificado listo para ingeniería de características (`src/modeling/`), donde cada fila representa el estado de una estación en un instante $t$ (cada 10 minutos).
-* **Reglas Anti-Data Leakage:** Los cruces con rankings, patrones horarios y agregados diarios de ciudad se resuelven mediante `merge_asof` hacia atrás exigiendo disponibilidad temporal estricta ($\text{available\_at} \le \text{timestamp}$). Asimismo, los registros reconstruidos por arranque en frío (*Cold Start*) se aíslan en `occupancy_estimated` y se etiquetan con `is_estimated = 1`, manteniendo intacta la verdad observada en `occupancy_pct`.
+Generada automáticamente por `src/etl/models_gold.py` en formato Parquet optimizado para analítica y Machine Learning en producción:
+* **Modelo Dimensional en Estrella:** Separa entidades descriptivas (`dim_stations`, `dim_calendar`, `dim_patterns`) de los eventos granulares (`fact_station_snapshots`), junto con el informe de completitud del recolector (`coverage_report`).
+* **Tabla Maestra Consolidada (`df_gold.parquet`):** Dataset unificado consumido directamente por `scripts/train_model.py` y `scripts/predict.py`, donde cada fila representa el estado de una estación en un instante $t$ (cada 10 minutos).
+* **Reglas *Anti-Data Leakage*:** Los cruces con rankings, patrones horarios y agregados diarios de ciudad se resuelven mediante `merge_asof` hacia atrás exigiendo disponibilidad temporal estricta ($\text{available\_at} \le \text{timestamp}$). Los registros reconstruidos por arranque en frío (*Cold Start*) se aíslan en `occupancy_estimated` y se etiquetan con `is_estimated = 1`, manteniendo intacta la verdad observada en `occupancy_pct`.
+* **Trazabilidad SHA-256:** Cada ejecución de entrenamiento calcula la huella digital SHA-256 de los ficheros de `data/gold/` y la registra en `models/lgbm_v1/metadata.json`.
+
+### Predicciones de Producción (`data/predictions/`)
+Generada de forma desacoplada por `scripts/predict.py` sin necesidad de reentrenar los modelos:
+* Almacena la salida de inferencia multi-horizonte (`predictions_lgbm.parquet`) con el estado físico actual y las previsiones de ocupación a $+1\text{ h}$, $+2\text{ h}$ y $+3\text{ h}$ para las 276 estaciones.
+* Constituye el contrato de entrada para la futura fase de optimización de rutas de la flota de rebalanceo.
+
+### Instantánea Congelada (`data/gold_snapshot_ml_20261122/`)
+* Carpeta reservada **exclusivamente para los cuadernos de `notebooks/`** (periodo auditado de 23 días: `31 oct – 22 nov`).
+* Al mantenerse aislada de la carpeta viva `data/gold/`, evita que nuevas capturas alteren las métricas, gráficos y conclusiones documentadas en la memoria del TFM. Las instrucciones de descarga de sus ficheros se detallan en [`notebooks/README.md`](../notebooks/README.md).
 
 ---
 
 ## 🔄 4. Reproducibilidad y Control de Versiones
 
-* **Regeneración completa:** Las carpetas `data/silver/` y `data/gold/` están excluidas en `.gitignore` y se reconstruyen limpiamente desde cero ejecutando el orquestador desde la raíz del proyecto:
+* **Regeneración de Silver y Gold:** Las carpetas `data/silver/` y `data/gold/` están excluidas en `.gitignore` y se reconstruyen limpiamente desde cero ejecutando el pipeline ETL desde la raíz del proyecto:
   ```bash
   python scripts/main_BBDD.py
+  ```
+* **Regeneración de Predicciones:** La carpeta `data/predictions/` también está excluida en `.gitignore` y se genera bajo demanda con:
+  ```bash
+  python scripts/predict.py
   ```
 * **Sincronización de capturas históricas:** Para incorporar los últimos archivos diarios acumulados por el *scheduler* automático en GitHub, basta con actualizar la rama local:
   ```bash
   git pull origin main
   ```
-* **Instantánea congelada (`gold_snapshot_ml_20261115/`):** Reservada para la ejecución reproducible de los cuadernos exploratorios y de modelado; las instrucciones de descarga de sus ficheros `.parquet` se detallan en [`notebooks/README.md`](../notebooks/README.md).
