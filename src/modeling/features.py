@@ -17,7 +17,17 @@ import pandas as pd
 FREQ_MINUTES: int = 10
 HORIZONS_HOURS: list[int] = [1, 2, 3]
 OCCUPANCY_LOW_THRESHOLD: float = 0.20
-OCCUPANCY_HIGH_THRESHOLD: float = 0.80
+OCCUPANCY_HIGH_THRESHOLD: float = 0.80  # Umbral real de negocio (ocupación observada > 80 %)
+
+# Umbrales de alerta de saturación por defecto sobre pred_lgbm (calibrados en df_val
+# sobre el snapshot de 23 días en EDA_prediccion_saturacion.ipynb). En entrenamiento
+# se recalibran dinámicamente sobre df_val y sirven como respaldo si no hay casos > 80 %.
+SATURATION_ALERT_THRESHOLDS: dict[int, float] = {
+    1: 0.74,
+    2: 0.70,
+    3: 0.65,
+}
+
 CATEGORICAL_COLS: list[str] = ["station_id_cat"]
 
 BASE_FEATURES: list[str] = [
@@ -65,6 +75,11 @@ def get_features_for_horizon(horizon_h: int) -> list[str]:
         f"target_is_weekend_{horizon_h}h",
     ]
     return BASE_FEATURES + horizon_specific
+
+
+def get_saturation_alert_threshold(horizon_h: int) -> float:
+    """Devuelve el umbral de respaldo de alerta de saturación para el horizonte h."""
+    return SATURATION_ALERT_THRESHOLDS.get(horizon_h, OCCUPANCY_HIGH_THRESHOLD)
 
 
 def prepare_observed_base(
