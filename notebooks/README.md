@@ -34,7 +34,7 @@ Cuaderno orientado al diseño y validación del motor de ruteo para la flota rea
 
 Resultados consolidados del modelo campeón **LightGBM (Optuna)** sobre el *snapshot* `gold_snapshot_ml_20261122`, incorporando la mejora obtenida mediante *Threshold Tuning* documentada en `EDA_prediccion_saturacion.ipynb`:
 
-| Horizonte | MAE | RMSE | $R^2$ | F1 Vacía ($< 20\%$) | F1 Saturada Base ($> 80\%$) | Umbral Calibrado (`df_val`) | F1 Saturada Calibrada (`df_test`) |
+| Horizonte | MAE | RMSE | $R^2$ | F1 Vacía (< 20%) | F1 Saturada Base (> 80%) | Umbral Calibrado (`df_val`) | F1 Saturada Calibrada (`df_test`) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **$+1\text{ h}$** | `0,0938` | `0,1335` | `0,7333` | `0,8464` | `0,3888` | `74,0%` | **`0,4985`** |
 | **$+2\text{ h}$** | `0,1190` | `0,1624` | `0,6058` | `0,7921` | `0,2348` | `70,0%` | **`0,4018`** |
