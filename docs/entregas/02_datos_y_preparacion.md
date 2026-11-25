@@ -24,9 +24,9 @@
 
 * **Fuente auxiliar de calendario:** API pública Nager.Date (`https://date.nager.at/api/v3/PublicHolidays`) para la obtención automatizada de festivos nacionales y autonómicos de Aragón (`ES-AR`), combinada con el calendario recurrente de festivos locales de Zaragoza (San Valero, Cincomarzada, El Pilar) y vísperas críticas de movilidad.
 
-* **Acceso y arquitectura de ingesta:** Descarga HTTP mediante peticiones REST (JSON) y streaming en bloque para CSV, gestionada a través de una arquitectura modular en Python (`src/config.py`, `src/io.py`, `src/utils.py`, `src/cleaning.py`, `src/models_gold.py`) ejecutada desde el orquestador `main_BBDD.py`.
+* **Acceso y arquitectura de ingesta:** Descarga HTTP mediante peticiones REST (JSON) y streaming en bloque para CSV, gestionada a través de una arquitectura modular en Python (`src/etl/config.py`, `src/etl/io.py`, `src/etl/utils.py`, `src/etl/cleaning.py`, `src/etl/models_gold.py`) ejecutada desde el orquestador `scripts/main_BBDD.py`.
 
-* **Plan de contingencia (Fallback):** Si la API no responde o se ejecuta en modo offline, `src/io.py` detecta los archivos cacheados en `data/raw/` (`resolve_download_mode`) y permite reutilizarlos en bloque sin conexión (`[U/r]`), apoyándose en la extrapolación de patrones de la Capa Gold para cubrir lagunas temporales.
+* **Plan de contingencia (Fallback):** Si la API no responde o se ejecuta en modo offline, `src/etl/io.py` detecta los archivos cacheados en `data/raw/` (`resolve_download_mode`) y permite reutilizarlos en bloque sin conexión (`[U/r]`), apoyándose en la extrapolación de patrones de la Capa Gold para cubrir lagunas temporales.
 
 ### Resumen de fechas reunidas y auditoría de cobertura (`coverage_report`)
 
@@ -47,7 +47,7 @@ El repositorio acumula ya **22 jornadas diarias** en `data/raw/historical/` (del
 
 * **Licencia:** Datos abiertos urbanos de la red Bizi Zaragoza (Ayuntamiento de Zaragoza / DatosBizi) reutilizados bajo normativa pública de datos abiertos y atribución de fuente; código del proyecto publicado bajo licencia MIT en el repositorio.
 * **Privacidad:** No se recopila ni almacena **ningún dato personal**, identificador de usuario, trazabilidad de trayectos individuales ni datos sensibles de ciudadanos. Cumple al 100 % con el principio de minimización de datos.
-* **Disponibilidad de las cinco entradas locales:** Las muestras de entrada de la API (`stations_raw.json`, `rankings_raw.json`, `rebalancing_raw.json`, `patterns_raw.json`, `bizi_history_raw.csv`) junto con los snapshots `data/raw/historical/*.parquet` están disponibles en el repositorio para ejecutar `python main_BBDD.py` en modo local (`[U]`) sin necesidad de clave de API (`BIZI_API_KEY`). Si se desea refrescar desde la API en vivo (`[R]`), basta con configurar `BIZI_API_KEY` en el archivo `.env` a partir de `.env.example`.
+* **Disponibilidad de las cinco entradas locales:** Las muestras de entrada de la API (`stations_raw.json`, `rankings_raw.json`, `rebalancing_raw.json`, `patterns_raw.json`, `bizi_history_raw.csv`) junto con los snapshots `data/raw/historical/*.parquet` están disponibles en el repositorio para ejecutar `python scripts/main_BBDD.py` en modo local (`[U]`) sin necesidad de clave de API (`BIZI_API_KEY`). Si se desea refrescar desde la API en vivo (`[R]`), basta con configurar `BIZI_API_KEY` en el archivo `.env` a partir de `.env.example`.
 
 ---
 
@@ -60,11 +60,11 @@ El procesamiento se estructura en un pipeline reproducible organizado en tres ca
   * *(Nota de alcance: La fuente `mobility_raw.json` se mantiene aislada en Bronze y excluida temporalmente de las capas posteriores para garantizar la estabilidad del esquema).*
 
 * **Silver (`data/silver/`):**
-  * Limpieza pura y estandarización de esquemas (`src/cleaning.py` y `src/utils.py`): renombrado a *snake_case*, eliminación de duplicados por `(station_id, timestamp)`, desanidado seguro de estructuras JSON (`timeWindow`, `expectedImpact`), tipado explícito (`Int64` entero anulable de Pandas para preservar nulos reales sin distorsionar promedios, `float64`), validación de rangos físicos (`capacity > 0`, `0 <= bikes/anchors <= capacity`, ocupación en `[0.0, 1.0]`) y normalización temporal estandarizada a `Europe/Madrid`.
+  * Limpieza pura y estandarización de esquemas (`src/etl/cleaning.py` y `src/etl/utils.py`): renombrado a *snake_case*, eliminación de duplicados por `(station_id, timestamp)`, desanidado seguro de estructuras JSON (`timeWindow`, `expectedImpact`), tipado explícito (`Int64` entero anulable de Pandas para preservar nulos reales sin distorsionar promedios, `float64`), validación de rangos físicos (`capacity > 0`, `0 <= bikes/anchors <= capacity`, ocupación en `[0.0, 1.0]`) y normalización temporal estandarizada a `Europe/Madrid`.
   * Salidas generadas: `stations_silver.csv`, `rebalancing_silver.csv`, `rankings_silver.csv`, `patterns_silver.csv`, `bizi_history_silver.csv` y `historical_snapshots_silver.parquet`.
 
 * **Gold (`data/gold/`):**
-  * Modelado Dimensional en Estrella (`src/models_gold.py`) almacenado íntegramente en formato columnar **Apache Parquet**:
+  * Modelado Dimensional en Estrella (`src/etl/models_gold.py`) almacenado íntegramente en formato columnar **Apache Parquet**:
     * `dim_stations.parquet`: Catálogo maestro de 276 estaciones únicas (`station_id`, `name`, `latitude`, `longitude`, `capacity`).
     * `dim_calendar.parquet`: Dimensión temporal enriquecida con festivos vía API (`is_holiday`, `day_type_effective`) e indicadores macro diarios (`demand_score`, `city_avg_occupancy`, `balance_index`).
     * `dim_patterns.parquet`: Perfiles esperados por estación, tipo de día (`WEEKDAY` / `WEEKEND`) y hora (`occupancy_avg`, `bikes_avg`).
@@ -90,6 +90,7 @@ El procesamiento se estructura en un pipeline reproducible organizado en tres ca
 
 * **Interpretación de nulos en retardos largos (`occ_lag_24h` y `occ_lag_7d`):** Debido al arranque gradual del *scheduler* (`31/10` – `02/11`), los retardos de $-24\text{ h}$ y $-7\text{ días}$ presentan valores ausentes en la primera semana de histórico, alcanzando cobertura superior al **97 %** a partir del **10 de noviembre**. Por ello, en la fase predictiva se emplean alineaciones temporales con tolerancia estricta (`merge_asof`) para no saltar huecos y modelos basados en árboles (`LightGBM`) que gestionan los `NaN` de forma nativa.
 * **Disponibilidad temporal de variables agregadas:** Al aplicar `available_at <= timestamp`, las métricas de `rankings` y `patterns` descargadas al final del periodo quedan nulas en las capturas previas de ese lote; en el modelado se compensa calculando perfiles históricos causales propios sobre la serie observada (`is_estimated == 0`).
+* **Anomalía puntual de lecturas *offline* en origen (`bikes_available == 0` y `anchors_free == 0`) — Mejora futura documentada:** Durante la auditoría de la Capa Gold (`notebooks/modelado_predictivo.ipynb`, Sección 1.3) y el análisis monográfico de saturación (`notebooks/EDA_prediccion_saturacion.ipynb`), se detectaron episodios minoritarios en los que la API reporta simultáneamente cero bicicletas disponibles y cero anclajes libres (estación temporalmente desconectada o fuera de servicio). En el esquema actual, estos registros producen una caída artificial de `occupancy_pct` al `0 %` y un pico de unidades bloqueadas (`disabled_units = capacity`). Por el momento se mantienen sin filtrar ni reprocesar para preservar la paridad exacta con el *snapshot* auditado, quedando documentada como mejora futura la incorporación de un indicador explícito (`is_offline_anomaly`) en la Capa Silver (`src/etl/cleaning.py`) o su filtrado opcional en `prepare_observed_base()` (`src/modeling/features.py`) antes de entrenar e inferir, con el fin de evitar que estaciones desconectadas generen señales falsas de vaciado para el optimizador de rutas.
 * **Criterios de selección de escenarios para demostración en la aplicación:**
   * **Jornada de referencia completa (`100 %` cobertura, 144/144 franjas):** **Domingo `08/11/2026`**, idónea para visualizar un ciclo completo de 24 horas de fin de semana sin interrupciones.
   * **Jornadas laborables de referencia (`98,61 %` – `99,31 %` cobertura):** **Martes `03/11/2026`** (143/144 franjas), **martes `10/11/2026`**, **jueves `12/11/2026`** o **martes `17/11/2026`** (142/144 franjas), recomendadas para demostrar las horas punta pendulares (07:00–09:30 y 17:30–20:00) y la simulación de rutas de rebalanceo.

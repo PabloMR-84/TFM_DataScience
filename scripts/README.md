@@ -8,10 +8,10 @@ Este directorio contiene los puntos de entrada ejecutables para lanzar de forma 
 
 ```text
 scripts/
-├── main_BBDD.py      # Pipeline ETL completo (Bronze -> Silver -> Gold)
-├── train_model.py    # Entrenamiento LightGBM multi-horizonte + trazabilidad SHA-256
-├── predict.py        # Inferencia batch desacoplada sobre data/gold/
-└── README.md         # Guía de ejecución y parámetros CLI
+├── main_BBDD.py       # Pipeline ETL completo (Bronze -> Silver -> Gold)
+├── train_model.py     # Entrenamiento LightGBM multi-horizonte, calibración y trazabilidad SHA-256
+├── predict_model.py   # Inferencia batch desacoplada y banderas de alerta sobre data/gold/
+└── README.md          # Guía de ejecución y parámetros CLI
 ```
 
 ---
@@ -31,7 +31,7 @@ python scripts/main_BBDD.py
 
 ## ▶️ 2. Entrenamiento del Modelo (`train_model.py`)
 
-Entrena los tres modelos **LightGBM** (`+1h`, `+2h`, `+3h`) sobre `data/gold/`, calcula el hash **SHA-256** de los ficheros de entrada, evalúa en Validación y Test frente al *baseline* Naive y guarda los artefactos y metadatos.
+Entrena los tres modelos **LightGBM** (`+1h`, `+2h`, `+3h`) sobre `data/gold/`, calcula el hash **SHA-256** de los ficheros de entrada, calibra dinámicamente sobre Validación (`df_val`) el umbral óptimo de alerta de saturación por horizonte, evalúa en Validación y Test frente al *baseline* Naive (incluyendo `precision_full`, `recall_full`, `f1_full` y `f1_full_base_80`) y guarda los artefactos y `metadata.json`.
 
 ```bash
 # Ejecución estándar (lee data/gold/ y guarda en models/lgbm_v1/)
@@ -54,18 +54,18 @@ python scripts/train_model.py --gold-dir data/gold --output-dir models/lgbm_v1
 
 ---
 
-## ▶️ 3. Inferencia Batch (`predict.py`)
+## ▶️ 3. Inferencia Batch (`predict_model.py`)
 
-Carga los modelos entrenados desde `models/lgbm_v1/` (sin reentrenar), reconstruye las características sobre `data/gold/` y exporta las predicciones multi-horizonte de ocupación.
+Carga los modelos entrenados y los umbrales calibrados desde `models/lgbm_v1/` (sin reentrenar), reconstruye las características sobre `data/gold/` y exporta las predicciones continuas multi-horizonte (`pred_lgbm_1h`, `pred_lgbm_2h`, `pred_lgbm_3h`) junto con las banderas binarias de alerta de vaciado (`pred_empty_{h}h`) y saturación calibrada (`pred_sat_{h}h`).
 
 * **Tipo de inferencia:** *Batch* (sin servidor HTTP/online).
 
 ```bash
 # Ejecución estándar (últimas 72 horas observadas -> data/predictions/predictions_lgbm.parquet)
-python scripts/predict.py
+python scripts/predict_model.py
 
 # Modo última captura (solo el instante más reciente disponible para las 276 estaciones)
-python scripts/predict.py --latest-only
+python scripts/predict_model.py --latest-only
 
 # Equivalente mediante entry point CLI
 smartrebalance-predict --last-hours 168
