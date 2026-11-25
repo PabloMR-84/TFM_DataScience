@@ -8,6 +8,21 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-25
+
+### Added
+- **Estudio monográfico de saturación (`notebooks/EDA_prediccion_saturacion.ipynb`):** Análisis detallado del comportamiento del regresor campeón (`LightGBM Optuna`) ante episodios de llenado extremo ($> 80\%$), incluyendo rankings Top 10 Real vs. Predicho, auditoría visual y en minutos sobre Top 5 Real y Top 5 Predicho exclusivo, cuantificación del sesgo de subestimación (`-20,24 pp` / `-28,61 pp` / `-33,31 pp`), calibración *anti-leakage* de umbrales en Validación (*Threshold Tuning*) y contraste frente a un clasificador binario auxiliar (`LGBMClassifier`).
+- **Calibración dinámica de umbrales de saturación y métricas ampliadas (`src/modeling/train.py`, `src/modeling/features.py`):** Incorporación de `calibrate_saturation_threshold()` para optimizar sobre `df_val` el umbral de alerta por horizonte (`0,74` en $+1\text{ h}$, `0,70` en $+2\text{ h}$, `0,65` en $+3\text{ h}$), constantes de respaldo `SATURATION_ALERT_THRESHOLDS` y registro de `precision_full`, `recall_full`, `f1_full` y `f1_full_base_80` en `models/lgbm_v1/metadata.json` (elevando `F1 Saturada` en Test a `0,4985` / `0,4018` / `0,3694`).
+- **Historial acumulativo de entrenamientos (`models/lgbm_v1/training_history.jsonl` y `src/modeling/train.py`):** Registro automático en formato JSON Lines (`append_training_history()`) que conserva las huellas `data_sha256`, umbrales calibrados y métricas de ejecuciones previas sin perder trazabilidad al reentrenar sobre `models/lgbm_v1/`.
+- **Banderas binarias de alerta en inferencia *batch* (`src/modeling/predict.py`):** Lectura automática de los umbrales calibrados desde `metadata.json` y exportación de las columnas `pred_empty_{h}h` y `pred_sat_{h}h` junto con las predicciones continuas `pred_lgbm_{h}h` en `data/predictions/predictions_lgbm.parquet`.
+- **Auditoría global de lecturas *offline* (`notebooks/modelado_predictivo.ipynb` y `docs/entregas/02_datos_y_preparacion.md`):** Incorporación de la celda `1.3` para auditar episodios con `bikes_available == 0` y `anchors_free == 0`, dejando documentada su gestión futura en ETL/modelado sin alterar el *snapshot* congelado.
+
+### Changed
+- **Renombrado del orquestador de inferencia (`scripts/predict.py` → `scripts/predict_model.py`):** Estandarización de nomenclatura junto a `scripts/train_model.py` y actualización de las exportaciones públicas en `src/modeling/__init__.py`.
+- **Actualización de entregables y documentación modular (`docs/entregas/03_machine_learning.md`, `README.md`, `models/README.md`, `notebooks/README.md`, `scripts/README.md`, `src/README.md`, `notebooks/modelado_predictivo.ipynb`):** Sincronización de la Entrega 03 al *snapshot* de 23 días (`gold_snapshot_ml_20261122`), referencias cruzadas al análisis de saturación, *Model Card* actualizada con métricas calibradas y documentación de `training_history.jsonl` y `scripts/predict_model.py`.
+- **Empaquetado y control de versiones (`pyproject.toml`, `.gitignore`):** Actualización de versión a `0.3.3` y ajuste de comentario sobre el versionado de `metadata.json` y `training_history.jsonl`.
+
+
 ## [0.3.2] - 2026-11-22
 
 ### Added

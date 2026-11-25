@@ -18,9 +18,9 @@ src/
 │
 ├── modeling/               # Pipeline de Machine Learning multi-horizonte (+1h, +2h, +3h)
 │   ├── __init__.py         # Exportaciones públicas del subpaquete modeling
-│   ├── features.py         # Ingeniería de características compartida (train e inferencia)
-│   ├── train.py            # Partición con embargo, SHA-256, entrenamiento y métricas
-│   └── predict.py          # Inferencia batch desacoplada y exportación de predicciones
+│   ├── features.py         # Ingeniería de características compartida y umbrales de ocupación
+│   ├── train.py            # Partición con embargo, SHA-256, calibración en Val y métricas
+│   └── predict.py          # Inferencia batch desacoplada y alertas binarias calibradas
 │
 └── README.md               # Documentación de la arquitectura de código fuente
 ```
@@ -38,10 +38,10 @@ Encargado de transformar las lecturas crudas de DatosBizi y los festivos oficial
 * **`models_gold.py`:** Construye la Capa Gold (`dim_stations`, `dim_calendar`, `dim_patterns`, `fact_station_snapshots` y `df_gold`), integra los festivos de Nager.Date (`ES-AR`) y Zaragoza, aplica cruces `merge_asof` hacia atrás (`available_at <= timestamp`) y aísla los registros de *Cold Start*.
 
 ### 2. `modeling` (Machine Learning en Producción)
-Encargado de la preparación de *features*, el entrenamiento trazable y la inferencia *batch* del modelo campeón (**LightGBM**):
-* **`features.py`:** Pipeline determinista compartido entre entrenamiento e inferencia para evitar *training-serving skew*. Incluye preparación de observaciones reales (`prepare_observed_base`), construcción de *targets* multi-horizonte (`add_multihorizon_targets`), retardos estrictos y *proxy* de furgonetas (`add_lag_and_rolling_features`), perfil basal causal (`add_causal_historical_profile`), calendario cíclico (`add_calendar_and_horizon_features`) y alineación de categorías (`align_tree_features`).
-* **`train.py`:** Calcula las huellas **SHA-256** de los datos de entrada (`compute_file_sha256`), aplica partición cronológica con embargo de $3\text{ horas}$ (`temporal_split_with_embargo`), entrena los tres modelos `LGBMRegressor` con los hiperparámetros optimizados, evalúa en Validación y Test frente al *baseline* Naive y guarda los artefactos `.joblib` y `metadata.json` en `models/`.
-* **`predict.py`:** Carga los modelos serializados y las categorías guardadas en `metadata.json`, reconstruye la matriz de características sobre `data/gold/` y exporta las predicciones recortadas a $[0, 1]$ en `data/predictions/predictions_lgbm.parquet`.
+Encargado de la preparación de *features*, el entrenamiento trazable, la calibración de alertas y la inferencia *batch* del modelo campeón (**LightGBM**):
+* **`features.py`:** Pipeline determinista compartido entre entrenamiento e inferencia para evitar *training-serving skew*. Define los umbrales reales de negocio (`OCCUPANCY_LOW_THRESHOLD = 0.20`, `OCCUPANCY_HIGH_THRESHOLD = 0.80`) y los umbrales de respaldo por horizonte (`SATURATION_ALERT_THRESHOLDS` y `get_saturation_alert_threshold`). Incluye preparación de observaciones reales (`prepare_observed_base`), construcción de *targets* multi-horizonte (`add_multihorizon_targets`), retardos estrictos y *proxy* de furgonetas (`add_lag_and_rolling_features`), perfil basal causal (`add_causal_historical_profile`), calendario cíclico (`add_calendar_and_horizon_features`) y alineación de categorías (`align_tree_features`).
+* **`train.py`:** Calcula las huellas **SHA-256** de los datos de entrada (`compute_file_sha256`), aplica partición cronológica con embargo de $3\text{ horas}$ (`temporal_split_with_embargo`), entrena los tres modelos `LGBMRegressor` con los hiperparámetros optimizados, calibra dinámicamente sobre `df_val` los umbrales de alerta de saturación (`calibrate_saturation_threshold`), evalúa en Validación y Test frente al *baseline* Naive (`evaluate_predictions`, incluyendo `precision_full`, `recall_full`, `f1_full` y `f1_full_base_80`) y guarda los artefactos `.joblib` y `metadata.json` en `models/`.
+* **`predict.py`:** Carga los modelos serializados, las categorías y los umbrales calibrados (`occupancy_thresholds`) guardados en `metadata.json`, reconstruye la matriz de características sobre `data/gold/` y exporta las predicciones continuas recortadas a $[0, 1]$ (`pred_lgbm_{h}h`) junto con las banderas binarias de alerta (`pred_empty_{h}h`, `pred_sat_{h}h`) en `data/predictions/predictions_lgbm.parquet`.
 
 ---
 

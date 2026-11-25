@@ -3,8 +3,9 @@ src/modeling/predict.py
 
 Módulo de inferencia batch desacoplado para SmartRebalance ZGZ.
 Carga los modelos LightGBM serializados y metadata.json desde models/,
-genera las características sobre data/gold/ y exporta las predicciones
-multi-horizonte (+1h, +2h, +3h) para el motor de optimización de rutas.
+genera las características sobre data/gold/ y exporta las predicciones continuas
+multi-horizonte (+1h, +2h, +3h) junto con sus banderas de alerta de vaciado y
+saturación calibradas para el motor de optimización de rutas.
 """
 
 from __future__ import annotations
@@ -20,9 +21,11 @@ import numpy as np
 import pandas as pd
 
 from modeling.features import (
+    OCCUPANCY_LOW_THRESHOLD,
     align_tree_features,
     build_feature_matrix,
     get_features_for_horizon,
+    get_saturation_alert_threshold,
     prepare_observed_base,
 )
 
@@ -64,6 +67,12 @@ def run_batch_inference(
     horizons: list[int] = [int(h) for h in metadata["horizons_hours"]]
     station_categories: list[int] = [int(c) for c in metadata["station_categories"]]
 
+    occ_thresholds = metadata.get("occupancy_thresholds", {})
+    low_threshold: float = float(occ_thresholds.get("low_real", OCCUPANCY_LOW_THRESHOLD))
+    sat_thresholds_meta: dict[str, float] = occ_thresholds.get(
+        "saturation_alert_by_horizon", {}
+    )
+
     path_df_gold = gold_dir / "df_gold.parquet"
     path_dim_stations = gold_dir / "dim_stations.parquet"
     path_dim_calendar = gold_dir / "dim_calendar.parquet"
@@ -103,7 +112,7 @@ def run_batch_inference(
 
     df_infer = df_infer.sort_values(["timestamp", "station_id"]).reset_index(drop=True)
 
-    # Contrato de salida idéntico al consumido por el optimizador de rutas
+    # Contrato base de salida compatible con el optimizador de rutas + banderas de alerta calibradas
     base_output_cols = [
         "station_id",
         "timestamp",
@@ -121,13 +130,37 @@ def run_batch_inference(
         if not model_path.exists():
             raise FileNotFoundError(f"No se encontró el artefacto del modelo: {model_path}")
 
-        logger.info("Cargando %s y prediciendo horizonte +%dh...", model_filename, h)
+        sat_threshold = float(
+            sat_thresholds_meta.get(f"{h}h", get_saturation_alert_threshold(h))
+        )
+
+        logger.info(
+            "Cargando %s y prediciendo horizonte +%dh (umbrales: vacía < %.2f, saturada > %.2f)...",
+            model_filename,
+            h,
+            low_threshold,
+            sat_threshold,
+        )
         model = joblib.load(model_path)
         feat_cols = get_features_for_horizon(h)
         X_infer, _ = align_tree_features(df_infer, feat_cols, station_categories)
 
-        preds = np.clip(model.predict(X_infer), 0.0, 1.0)
-        df_out[f"pred_lgbm_{h}h"] = preds.astype(np.float64)
+        preds = np.clip(model.predict(X_infer), 0.0, 1.0).astype(np.float64)
+        pred_empty = (preds < low_threshold).astype(np.int8)
+        pred_sat = (preds > sat_threshold).astype(np.int8)
+
+        df_out[f"pred_lgbm_{h}h"] = preds
+        df_out[f"pred_empty_{h}h"] = pred_empty
+        df_out[f"pred_sat_{h}h"] = pred_sat
+
+        logger.info(
+            "  -> +%dh | Alertas vacía: %d (%.2f%%) | Alertas saturada: %d (%.2f%%)",
+            h,
+            int(pred_empty.sum()),
+            float(pred_empty.mean() * 100),
+            int(pred_sat.sum()),
+            float(pred_sat.mean() * 100),
+        )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df_out.to_parquet(output_path, index=False)

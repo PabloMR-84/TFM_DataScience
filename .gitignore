@@ -29,7 +29,7 @@ data/raw/*
 !data/gold_snapshot_ml_20261122/.gitkeep
 
 # ==============================================================================
-# 3. ARTEFACTOS DE MODELOS (SE VERSIONA metadata.json, NO LOS BINARIOS)
+# 3. ARTEFACTOS DE MODELOS (SE VERSIONA metadata.json Y training_history.jsonl, NO LOS BINARIOS)
 # ==============================================================================
 *.joblib
 *.pkl

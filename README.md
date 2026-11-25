@@ -1,12 +1,12 @@
 # TFM_DataScience — SmartRebalance ZGZ
 
-**SmartRebalance ZGZ** es un sistema analítico y predictivo para la gestión proactiva de la red de bicicletas públicas **Bizi Zaragoza** (276 estaciones). El proyecto integra un pipeline de datos con arquitectura Medallón (*Bronze → Silver → Gold*), modelos de Machine Learning multi-horizonte (`+1h`, `+2h` y `+3h`) con trazabilidad SHA-256 para anticipar vaciados y saturaciones, y la preparación de entradas para la futura optimización logística de la flota de rebalanceo (6 furgonetas de 22 plazas en operación 24 horas).
+**SmartRebalance ZGZ** es un sistema analítico y predictivo para la gestión proactiva de la red de bicicletas públicas **Bizi Zaragoza** (276 estaciones). El proyecto integra un pipeline de datos con arquitectura Medallón (*Bronze → Silver → Gold*), modelos de Machine Learning multi-horizonte (`+1h`, `+2h` y `+3h`) con trazabilidad SHA-256 y calibración dinámica de umbrales de saturación para anticipar vaciados y llenados, y la preparación de entradas para la futura optimización logística de la flota de rebalanceo (6 furgonetas de 22 plazas en operación 24 horas).
 
 ---
 
 ## Estructura del Proyecto
 
-El repositorio sigue una arquitectura modular estándar (*src-layout*) que separa la ingesta, la lógica empaquetada, los scripts ejecutables, los artefactos entrenados y la experimentación. Cada carpeta principal incluye (o incluirá) su propio `README.md` con el detalle técnico de su contenido:
+El repositorio sigue una arquitectura modular estándar (*src-layout*) que separa la ingesta, la lógica empaquetada, los scripts ejecutables, los artefactos entrenados y la experimentación. Cada carpeta principal incluye su propio `README.md` con el detalle técnico de su contenido:
 
 ```text
 TFM/
@@ -15,7 +15,7 @@ TFM/
 ├── data/                 # Capas Medallón (raw, silver, gold), predicciones y snapshots congelados
 ├── docs/                 # Documentación técnica y memoria de entregas del TFM
 ├── models/               # Modelos entrenados (locales) y metadatos versionados (metadata.json + SHA-256)
-├── notebooks/            # Cuadernos de experimentación, evaluación y explicabilidad SHAP
+├── notebooks/            # Cuadernos de experimentación, evaluación, SHAP y análisis de saturación
 ├── scripts/              # Orquestadores ejecutables (ETL, entrenamiento e inferencia batch)
 ├── src/                  # Código fuente empaquetado del proyecto (etl/ y modeling/)
 ├── .env                  # Variables de entorno locales (BIZI_API_KEY, ignorado en Git)
@@ -78,18 +78,18 @@ python scripts/main_BBDD.py
 ```
 
 ### 2. Entrenamiento del Modelo Predictivo (LightGBM `+1h`, `+2h`, `+3h`)
-Lee `data/gold/`, calcula el hash **SHA-256** de los datos de entrada, entrena los modelos multi-horizonte y guarda los artefactos y `metadata.json` en `models/lgbm_v1/`:
+Lee `data/gold/`, calcula el hash **SHA-256** de los datos de entrada, entrena los modelos multi-horizonte, calibra automáticamente los umbrales de alerta de saturación sobre Validación (`df_val`) y guarda los artefactos y `metadata.json` en `models/lgbm_v1/`:
 ```bash
 python scripts/train_model.py
 # o mediante el entry point CLI:
 smartrebalance-train
 ```
 
-### 3. Inferencia Batch (Predicciones)
-Carga los modelos serializados sin reentrenar y exporta las predicciones a `data/predictions/predictions_lgbm.parquet`:
+### 3. Inferencia Batch (Predicciones y Alertas)
+Carga los modelos serializados y los umbrales calibrados de `metadata.json` sin reentrenar y exporta las predicciones continuas junto con las banderas de alerta de vaciado/saturación a `data/predictions/predictions_lgbm.parquet`:
 ```bash
 # Ventana reciente por defecto (últimas 72 horas)
-python scripts/predict.py
+python scripts/predict_model.py
 
 # Solo el instante más reciente capturado (modo tiempo real)
 smartrebalance-predict --latest-only
