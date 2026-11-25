@@ -50,7 +50,7 @@ De este modo, al ejecutar los cuadernos se reproducen exactamente las mismas mé
 
 ### 1. Enlace de descarga
 Descarga los cuatro archivos `.parquet` de la instantánea desde la carpeta compartida de Google Drive:
-* 🔗 **[Descargar snapshot Gold (Google Drive)](https://drive.google.com/drive/folders/1I8Wwiss2vubQlXl92_SIGDLN5zQAImFd?usp=drive_link)** *(asegúrate de descargar la carpeta correspondiente a `gold_snapshot_ml_20261122`)*.
+* 🔗 **[Descargar snapshot Gold (Google Drive)](https://drive.google.com/drive/folders/1CCxv2z4uk2fDO9MtaDbFdER9UDy2kmbX?usp=sharing)** *(asegúrate de descargar la carpeta correspondiente a `gold_snapshot_ml_20261122`)*.
 
 ### 2. Ubicación en el repositorio
 Guarda los archivos descargados dentro de `data/gold_snapshot_ml_20261122/`, respetando exactamente esta estructura:
